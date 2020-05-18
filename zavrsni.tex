@@ -49,8 +49,22 @@ Optix denoiser is a part of the Optix SDK that can be used standalone. It takes 
 \chapter{Overview of Vulkan and its ray tracing extension}
 \chapter{Implementation of a simple ray traced application}
 
-\chapter{Zaključak}
-Zaključak.
+\chapter{Conclusion}
+Ray tracing simplifies a lot of concepts which, when using standard rasterization, need to be simulated by complex algorithms. When properly implemented, ray tracing will produce soft shadows, accurate reflections and detailed global ilumination, and will do so inherently.
+
+It's main drawback is its prohibitive cost - while GPUs today are technically capable of running the algorithm in real time, it just isn't fast enough to do everything we'd like naively, requiring some kind of compromise:
+\begin{itemize}
+	\item limiting raytracing to only certain aspects of the scene (only shadows, only reflections or only global illumination), while using rasterization for the rest
+	\item ray tracing with low number of samples per pixel, resulting with noisy images that need to be denoised
+	\item ray tracing at lower resolutions using one of the upscaling techniques to get the full resolution image
+	\item accumulating lighting and other over several frames, creating a higher quality renders, but with visible lighting latency and artefacts
+\end{itemize}
+
+Methods enumerated above are only a few possible optimizations and many implementation often use more than one of them. Especially interesting is rendering at lower resolution and upscaling - Nvidia has been developing a deel learning powered technique called DLSS (Deep Learning Super Sampling) which runs in constant time, but produces very good results.
+
+Finally, it wouldn't be fair to ignore the recent improvements to rasterization - Unreal Engine 5 has recently been announced using two new technologies - Nanite and Lumin. While not many details are available yet, they seem to be able to produce images at a comparable quality to ray traced renders, possibly at a lower cost.
+
+With all that in mind, it is abundantly clear that ray tracing will not be replacing rasterization in any forseeable future. It will be used more often though, especially as more powerfull hardware becomes available.
 
 \bibliography{literatura}
 \bibliographystyle{fer}
@@ -59,7 +73,7 @@ Zaključak.
 \vspace*{\fill}
 \thispagestyle{empty}
 \begin{center}
-  {\bf Interaktivan prikaz vokseliziranog prostora s Vulkanom uz sklopovski ubrzano praćenje zrake}
+	{\bf Interaktivan prikaz vokseliziranog prostora s Vulkanom uz sklopovski ubrzano praćenje zrake}
 \end{center}
 \hspace*{\fill} {\bf Sa\v{z}etak} \hspace*{\fill} \par
 \vspace*{25pt}
