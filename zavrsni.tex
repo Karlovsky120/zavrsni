@@ -19,8 +19,35 @@
 
 \tableofcontents
 
-\chapter{Uvod}
-Uvod rada. Nakon uvoda dolaze poglavlja u kojima se obrađuje tema.
+\chapter{Introduction}
+Ever since OpenGL 1.0 was released in 1992., the computer hardware industry has been continuously improving on what GPUs are capable of. Todays graphics cards are boasting FP perfomance of over 10 TFLOPS, making them more than $10^{12}$ times faster than the ones initialy released with OpenGL 1.0. While OpenGL has changed over the last 20 years (current version 4.6), it can no longer extract the full potential of the graphics cards built with modern architectures. This is why Vulkan was created, a new API designed from ground up for the modern GPU architectures. It is a more advanced API, leaving more control in the hands of the developer, whereas in OpenGL a lot of operations were handled by the GPU drivers.
+
+Modern graphics cards have reached another important milestone within the last few years. While realtime rendering has been done almost exclusively using rasterization, it has now become possible render significant parts of the scene using ray tracing, such as shadow, reflection and global illumination. There are implementations today that even render the whole scene solely using ray tracing. A whole new pipeline has been created for modern graphic APIs (including Vulkan) that can utilize hardware to accelerate certain aspects of ray tracing, most notably ray triangle intersections. This paper will first explore how to efficiently represent voxelized space on the GPU and then render it using the new ray tracing pipeline.
+
+\chapter{Used tools and technologies}
+\section{C++}
+C++ is a primarily object oriented programming language. It was developed by Bjarne Stroustrup as an extension of the C language and was initially standardized by ISO in 1998, current standard being C++17. Due to it's speed and low-level memory managment capabilites, it became a first choice for development of 3D applications.
+
+\section{Vulkan}
+Vulkan is a graphics API released on 26th of February 2016 by the Khronos consortium, an open industry consortium consisting of over 150 software and hardware companies. It's a cross-platform graphics and compute API. The API is constantly being worked and expaneded upon, current version being API is 1.2. While it’s capable of better utilizing the GPU resources, it’s not meant as a replacement for OpenGL which still works very well for most use cases. It is a very verbose API - while a hello triangle program in OpenGL 1.0 is usually under 20 lines of code, hello triangle program in Vulkan is often over 900 lines of code. However, the developer has a lot more control (and by extent, responsibility) over the application. A lot of features and functions that were handled and synchronized by the driver are now up to the user to write and control.
+
+Vulkan is released as a C99 header file. Since its initial release, more than several different bindings for various languages have been release, including the ones for C++, C\#, Python, Java, Haskell and many others. There even exists a binding that allows for Direct3D 9 applications to run over Vulkan.
+
+Along with Vulkan, a new standard for programmable shaders was developed, SPIR-V. It can be compiled from GLSL (and recently HLSL) source code ensuring more precise interpretation of the specification, addressing many issues that stemed from GLSL and HLSL shaders behaving differently on different vendor hardware. 
+
+\section{LunarG SDK}
+LunarG SDK is a Windows and Linux compatible Vulkan SDK which provides the various components need to develop a Vulkan application, including Vulkan loader, Vulkan layers, debugging tools, SPIR-V tools, Vulkan runtime installer, documentation samples and demos.
+
+\section{GLFW}
+GLFW is a Graphics Library FrameWork originaly developed for OpenGL. Today it supports Vulkan and is a simple API used for creating windows and sufaces, as well as reciving inputs and events.
+
+\section{Optix denoiser}
+Optix denoiser is a part of the Optix SDK that can be used standalone. It takes noisy images produced by ray tracing and outputs a denoised image. While there is a more advanced vartiant that takes in two additional images - one representing the albedo colour of each fragment and the other with the normal of each fragment, it isn't used in this paper.
+
+\chapter{Representation of voxelized space using greedy meshing}
+\chapter{What is ray tracing and how it compares to rasterization}
+\chapter{Overview of Vulkan and its ray tracing extension}
+\chapter{Implementation of a simple ray traced application}
 
 \chapter{Zaključak}
 Zaključak.
@@ -37,15 +64,15 @@ Zaključak.
 \hspace*{\fill} {\bf Sa\v{z}etak} \hspace*{\fill} \par
 \vspace*{25pt}
 
-Sažetak na hrvatskom jeziku.
+U ovom radu razrađen je prikaz konačnog vokseliziranog prostora upotrebom sklopovski ubrzanog algoritma praćenja zrake. Uspoređena je standardna rasterizacija s algoritmom praćenja zraka te su opisani prednosti i mane jednog nad drugim. Posebna pažnja dana je načinu na koji Vulkan izlaže sklopovski ubrzano praćenje zrake kroz ekstenziju VK\_KHR\_RAY\_TRACING. Konačno, dan je malen Vulkan primjer koji demonstrira osnovnu implementaciju algoritma praćenja zrake.
 
-\kljucnerijeci{Ključne riječi, odvojene zarezima.}
+\kljucnerijeci{algoritam praćenja zrake, vulkan, voksel, sklopovsko ubrzanje}
 
 \engtitle{Rendering of Voxelized Space with Vulkan Using Hardware Accelerated Ray Tracing}
 \begin{abstract}
-Abstract.
+This paper explores realtime representation of finite voxelized space using hardware accelerated ray tracing. It compares standard rasterization to ray tracing and outlines benefits and drawbacks of one over the other. It's explored how Vulkan exposes hardware ray tracing capabilities through its  VK\_KHR\_RAY\_TRACING extension. Finally, a small Vulkan example is given that shows a basic implementation of the ray tracing algorithm.
 
-\keywords{Keywords.}
+\keywords{ray tracing, vulkan, voxel, hardware acceleration}
 \end{abstract}
 
 \end{document}
