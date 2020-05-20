@@ -1,0 +1,5 @@
+[0] Config.pm:304> INFO - This is Biber 2.14
+[0] Config.pm:307> INFO - Logfile is 'literatura.blg'
+[53] biber-MSWIN32:322> INFO - === 
+[423] Utils.pm:320> ERROR - Cannot find 'literatura.bcf'!
+[424] Biber.pm:132> INFO - ERRORS: 1

@@ -1,0 +1,34 @@
+\begin{thebibliography}{4}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[unr(2020)]{unreal}
+A first look at unreal engine 5, 2020.
+\newblock URL
+  \url{https://www.unrealengine.com/en-US/blog/a-first-look-at-unreal-engine-5}.
+
+\bibitem[{Alexander Overvoorde}()]{vulkan_tutorial}
+{Alexander Overvoorde}.
+\newblock Vulkan tutorial.
+\newblock URL \url{https://vulkan-tutorial.com/Overview}.
+
+\bibitem[{Chakravarty R. Alla Chaitanya, Anton Kaplanyan, Christoph Schied,
+  Marco Salvi, Aaron Lefohn, Derek Nowrouzezahrai, Timo
+  Aila}(2017)]{nvidia_optix}
+{Chakravarty R. Alla Chaitanya, Anton Kaplanyan, Christoph Schied, Marco Salvi,
+  Aaron Lefohn, Derek Nowrouzezahrai, Timo Aila}.
+\newblock \emph{Interactive Reconstruction of Monte Carlo Image Sequences using
+  a Recurrent Denoising Autoencoder}, 2017.
+\newblock URL
+  \url{https://research.nvidia.com/sites/default/files/publications/dnn_denoise_author.pdf}.
+
+\bibitem[{The Khronos® Vulkan Working Group}(2020)]{vulkan_spec}
+{The Khronos® Vulkan Working Group}.
+\newblock \emph{Vulkan® 1.2.141 - A Specification}, 2020.
+\newblock URL
+  \url{https://www.khronos.org/registry/vulkan/specs/1.2-extensions/html/vkspec.html}.
+
+\end{thebibliography}
