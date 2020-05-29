@@ -2,6 +2,13 @@
 \usepackage{booktabs}
 \usepackage{graphicx}
 \usepackage{wrapfig}
+\usepackage{listings}
+
+\lstset{
+	basicstyle=\footnotesize,
+	numbers=left,
+	tabsize=2
+}
 
 \graphicspath{{./images/}}
 
@@ -67,11 +74,121 @@ GLFW is a Graphics Library FrameWork originally developed for OpenGL. It a simpl
 Optix denoiser \cite{nvidia_optix} is a part of the Nvidia Optix SDK that can be used standalone. It takes noisy images produced by ray tracing and outputs a denoised image. While there exists a more advanced variant that takes two additional images - one representing the albedo colour of each fragment and the other with the normal of each fragment, it isn't used in this paper.
 
 \chapter{Representation of voxelized space using greedy meshing}
+Voxelized space is represented by descreete elements at regular intervals, called voxels. Each voxel contains a single value, denoting whether it's opaque or transparent. Opaque voxels will be drawn, while transparent voxels will be treated as empty. To manage them easier, groups of 32x32x32 voxels are grouped into chunks. Both raster and ray tracing pipelines require triangles for input, so the question is how to transform chunks into a 3D mesh of triangles.
+
+\section{The naive method}
+The simplest way to generate a mesh from a chunks is to iterate through each and every voxel and check whether they are air or not. If the voxel is air, generate two triangles per voxel side, for a total of 12 triangles per voxel. The worst case scenario is a chunk filled with opaque voxels and in that case the algorithm creates 393,216 triangles. This method is fast thought, and each voxel relies only its own value.
+
+\section{Optimizing the naive method}
+A simple optimization can greatly reduce the number of triangles created by the naive method. Each neighbouring voxel is checked and a pair of triangles is created only if the neighbour is transparent. The worst case scenario from the previous example generates only 12,288 triangles. Note that this is no longer the worst case scenario for the optimized algorithm. That honour goes to a chunk filled 50\% with voxels spaced in checkerboard patter. In this case, number of triangles created is 196,608, the half of the naive method. This scenario will be the worst case for every other algorithm explored.
+
+\section{Greedy meshing}
+Unlike previous methods that analyse the chunk voxel by voxel, greedy meshing works by dividing the chunk into single voxel slices across each of the axes. Since each slice has two faces (eg. horizontal slice has the top and the bottom face), the actual number of slices is six.
+For each slice, the algorithm looks for adjacent voxels and merges them into bigger rectangles. The algorithm creates only 12 triangles for a chunk filled with opaque voxels. One of the most important benefit of this algorithm which may not be apparent right away is in the fact that the triangle mesh is divided into slices. When a voxel is updated, instead of re-meshing the whole chunk, only six slices that lie on the surfaces of the updated voxel need to be re-meshed.
+
+There are two optimizations made for this algorithm:
+\begin{itemize}
+	\item Chunks are padded with a single transparent block on each size. This removes the literal edge cases.
+	\item Meshes are often stored as a pair: a list of (unique) vertices and a list of indices. Since in most models a single vertex is shared between multiple triangles, this often more than halves the mesh memory footprint.
+	\item This implementation assumes there will be a lot of chunks created. This is why only a single vertex array which stores every possible vertex within a chunk is created. A chunk can be uniquely identified by only the index array.
+\end{itemize}
+
+Here is the algorithm that processes slices on the plane perpendicular to the x-axis. The inputs are a three-dimensional array representing a chunks (padded with air around it) and an integer which denotes which side of the slice is being processed, while the output is the index array. There are several things to note:
+\begin{itemize}
+	\item \texttt{meshed} is a temporary array that keeps track of already processed voxels, \texttt{updateMeshed} updates it every time a new quad is added to the list
+	\item \texttt{pushRectangels} adds six new indices to the index array
+	\item \texttt{getVertexIndex} gets the index of a particular vertex in the vertex array
+	\item \texttt{P\_SIZE} is the padded size of a chunk (34 for a 32x32x32 chunk) while \texttt{CHUNK\_SIZE} is the actual size of the chunk (32 for a 32x32x32 chunk)
+\end{itemize}
+
+\begin{lstlisting}[language=c++][frame=single]
+std::vector<uint32_t> xSlice(bool blocks[P_SIZE][P_SIZE][P_SIZE], int32_t side) {
+	std::vector<uint32_t> slices;
+	for (uint32_t i = 1; i < CHUNK_SIZE + 1; ++i) {
+		bool meshed[CHUNK_SIZE][CHUNK_SIZE] = {};
+		for (uint32_t j = 1; j < CHUNK_SIZE + 1; ++j) {
+			for (uint32_t k = 1; k < CHUNK_SIZE + 1; ++k) {
+				if (meshed[j - 1][k - 1] == false
+					&& blocks[i][j][k] == true
+					&& blocks[i + side][j][k] == false) {
+
+					// Determine the height of the rectangle
+					uint32_t dim1 = k - 1;
+					do {
+						++dim1;
+					} while (meshed[j - 1][dim1 - 1] == false
+						&& blocks[i][j][dim1] == true
+						&& blocks[i + side][j][dim1] == false
+						&& dim1 < CHUNK_SIZE + 1);
+
+					// Determine the width of the rectangle
+					uint32_t dim2 = j + 1;
+					do {
+						bool holeOrObstructionFound = false;
+						for (uint32_t m = k; m < dim1; ++m) {
+							if (blocks[i][dim2][m] == false
+								|| blocks[i + side][dim2][m] == true) {
+								holeOrObstructionFound = true;
+								break;
+							}
+						}
+
+						if (holeOrObstructionFound) {
+							break;
+						}
+
+						++dim2;
+					} while (dim2 < CHUNK_SIZE + 1);
+
+					// Mark voxels as processed and update the slice with the quad
+					updateMeshed(meshed, j, k, dim1, dim2);
+
+					uint32_t v1 = getVertexIndex(i - 1, k - 1, j - 1);
+					uint32_t v2 = getVertexIndex(i - 1, k - 1, dim2 - 1);
+					uint32_t v3 = getVertexIndex(i - 1, dim1 - 1, j - 1);
+					uint32_t v4 = getVertexIndex(i - 1, dim1 - 1, dim2 - 1);
+
+					if (side == -1) {
+						pushRectangle(slices, v1, v2, v3, v4);
+					}
+					else {
+						pushRectangle(slices, v1, v3, v2, v4);
+					}
+				}
+			}
+		}
+	}
+	return slices;
+}
+\end{lstlisting}
+
+The algorithms for planes perpendicular to other two axes are analogus.
 
 \chapter{What is ray tracing and how it compares to rasterization}
-\section{Rasterization overview}
+The goal of both rasterization and ray tracing is to take a scene made out of primitives (most often, triangles) and transform it into a two dimensional image that can be shown on a screen. How they both go about doing that is vastly different.
 
-\section{Ray tracing algorithm}
+\section{Ray tracing overview}
+Various light sources in our environment launch fotons into their surroundings. Those photons bounce against various surfaces and some of the land in our eyes. Simulating every photon that a light source produces is neither viable or very efficient. Instead, in ray tracing, only the fotons that hit the eye of the observer are traced back to their source. For each pixel of the screen, a ray is traced from the eye of the observer through the pixel and into the scene. This ray is called the primary ray. The closest intersecition of the ray with the scene geometry is found, called a ray hit. From this point, several new rays can be formed:
+\begin{itemize}
+	\item Reflected ray
+	\item Refracted ray
+	\item Shadow rays
+\end{itemize}
+
+Reflected and refracted rays will be traced through the geometry of the scene, potentially creating new hits. The process will recursively repeat until a certain depth, or until the contribution the a ray becomes too insignificant. The shadow rays are shoot towards the light sources of the scene. If they don't intersect anything between the hit and the light source, the ray origin is considered lit by that light source. If the light source is a point light, a single ray is sufficient, generating hard shadows. For area lights, several points on the light are sampled and a ray is traced to each of them. This enables the generation of more realistic soft shadows.
+
+Approach described above will generate an image that will look realistic, but with a lot of noise, especially if area lights are used. This can be dealt with in two ways:
+\begin{itemize}
+	\item Tracing more rays per pixel - instead of tracing a single ray trough the center of the pixel, multiple points on the pixel are sampled and a ray is traced through each. The final colour of the pixel is then the average result of each of the rays. In order for the image to converge, ie. for noise to be removed, the required number of rays per pixel s usually over a hundred, often several thousand. This is not viable for real time raytracing on current hardware, but will produce the results are closest to the ground truth.
+	\item Using a denoising algorithm on the final image - the final image can be processed by an algorithm that removes the noise. The image can often be supplemented with addtional data, like the image of the scene that is uniformly lit (which can be a product of raster pipeline) or an image that instead of the colour holds the value of the normal of each pixel of the image. This method is much faster and denoising algorithms today will often produce results that are almost indistinguishable from the ground truth.
+\end{itemize}
+
+An algorithm called path tracing takes ray tracing a step further. Once a hit is found, instead of tracing only several specific rays, many rays will be generated going in random directions. This method is used for offline rendering, where the quality of the image is more important than the speed at which it can be produced.
+
+\section{Rasterization overview}
+The list of vertices is first taken through a vertex shader. Vertex shader will general take two forms of input. Per vertex attribues and constant data. Per vertex attributes can be vertex position, vertex normal or some other data specifict to a vertex while the constant data are often camera and light positions. Vertex shaders are fully 
+
+Rasterization take an simplified but faster way to process the geometry. Each triangle is projected to the screen and turned into pixels. If the middle of the pixel is within the triangle, it will be considered a part of the triangle.
 
 \chapter{Overview of Vulkan and its ray tracing extension}
 While OpenGL is still continuously being updated, there is only so much that can be done for an API that is almost three decades old. This is why Vulkan was created, designed from the ground up with the modern architecture of graphics cards in mind. It's a cross-platform graphics and compute API that can run on a variety of operating systems and which many devices can support. Due to all of this, Vulkan is a complex and extremely verbose API. While on the surface it might look like it's a lot more complex than OpenGL, the difference I much smaller than it appears to be on the first glance. A lot of complexity (and verbosity) comes from the fact that a lot of responsibility (and by extension, control) has been shifted from the driver to the application.
