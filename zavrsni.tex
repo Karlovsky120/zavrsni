@@ -195,12 +195,10 @@ While OpenGL is still continuously being updated, there is only so much that can
 
 As a result, a hello triangle program that might have taken 20 or so lines in OpenGL 1.0 now takes over 900 lines of code in Vulkan \cite{vulkan_tutorial}.
 
-%Before continuing with ray tracing, it would be worth to first visit several recurring patterns which can be found when writing a Vulkan application, as well as generally describe the parts that are common to most graphical applications.
-
-Several key points that make Vulkan more performant and more suitable for modern systems than OpenGL:
+There are several key points that make Vulkan more performant and more suitable for modern systems than OpenGL:
 \begin{itemize}
 	\item Low API overhead. Instead of issuing commands to the device one by one, multiple commands are recorded to command buffers which are then submitted to the GPU to be executed.
-	\item API makes no guarantees on order of execution of commands recorded to the submitted command buffer. The application needs to use pipeline and memory barriers to create dependencies between commands. In a well-written application, this means that commands will only be blocked by the commands that they depend on.
+	\item API makes no guarantees on order of execution of commands recorded to the submitted command buffer. The application needs to use pipeline and memory barriers to create dependencies between commands. In a well-written application, this means that commands will only be blocked by the commands that they depend on. This extends to other mechanism as well, often explicit dependencies need to be stated, giving the driver the freedom to arrange the workload in the most optimal way, while respecting those dependecies.
 	\item API has been written with multicore CPUs in mind. While it's not possible to concurrently record commands to the same command buffer from multiple threads, it is possible to create and (concurrently) record commands to secondary command buffers that can then be tied together in a primary command buffer.
 	\item API controls memory allocations. In OpenGL, all device memory allocations have been managed by the driver, whereas in Vulkan all memory allocations need to be explicitly managed by the application.
 	\item Most objects in the API are immutable. While this makes the API a bit more cumbersome to use, the driver can use this guarantee to make optimizations that weren't possible in OpenGL.
@@ -216,7 +214,7 @@ Most of communication between the application and the device is done with comman
 
 \subsection{Synchronization}
 \subsubsection{Synchronization within buffers}
-All of the commands in a command buffer are executed asynchronously. Pipeline barriers act as execution barriers between various commands, ensuring various commands are executed after described pipeline stages. Each pipeline barrier can hold a reference to one or more image and buffer memory barriers (\texttt{vk::ImageMemoryBarrier} and \texttt{vk::BufferMemoryBarrier}), determining the order of the operations over those resources (eg. preventing read operations on a buffer before all writes have been completed).
+All of the commands in a command buffer are executed asynchronously. Pipeline barriers act as execution barriers between various commands, ensuring various commands are executed after described pipeline stages. Each pipeline barrier can hold a reference to one or more image and buffer memory barriers (\texttt{vk::ImageMemoryBarrier} and \texttt{vk::BufferMemoryBarrier}), determining the order of the operations over those resources (eg. preventing read operations on a buffer or an image before all writes have been completed).
 
 \subsubsection{Synchronization between buffers}
 Submitting one command buffer before the other does not guarantee it will be executed first. On each command buffer submission, it's possible to supply one or more binary semaphores (\texttt{vk::Semaphore}) that the command buffer will wait on to be signalled before executing, or semaphores that will be signalled once the command buffer has completed its execution. Fences (\texttt{vk::Fence}) are used similarly, but they enable command buffer synchronization with the application (eg. waiting for an image to be rendered before attempting to present it on screen). In Vulkan 1.2, timeline semaphores have been introduced with the \texttt{VK\_KHR\_TIMELINE\_SEMAPHORE} extension. It enables more complex dependencies to be expressed with a single semaphore holding several points in time instead of being forced to use a binary semaphore between each of the steps.
@@ -225,15 +223,15 @@ Submitting one command buffer before the other does not guarantee it will be exe
 Every Vulkan object created by the application will have its own handle. Once an object is created, the application has to keep track of it and destroy it once it's no longer needed. Most Vulkan objects don't need additional memory other than its own metadata. The two exceptions are pooled resources and application managed resources.
 
 \subsubsection{Pooled resources}
-Two examples of pooled resources are descriptor sets and command buffers. First a pool object (\texttt{vk::DescriptorPool} and \texttt{vk::CommandPool}) needs to be created from which desired objects are then allocated. The memory of these pools is managed by the device driver.
+Two examples of pooled resources are descriptor sets and command buffers. First a pool object (\texttt{vk::DescriptorPool} or \texttt{vk::CommandPool}) needs to be created from which desired objects are then allocated. The memory of these pools is managed by the device driver.
 
 \subsubsection{Application managed resources}
-Two most notable entries of this category are buffers (\texttt{vk::Buffer}) and Images (\texttt{vk::Image}). Once a handle to one of these resources is created, the application must query for the memory requirements of the object and then allocate device memory (\texttt{DeviceMemory}) with suitable properties. Finally, this memory must then be bound to the object. It's recommended to allocate a single device memory and bind several objects to various offsets, especially since its possible to have only 4096 allocated device memory at one time (on Windows at least, Linux doesn't suffer from such limitations). Since most API calls that take buffers as arguments will often take both offset and size, it's possible to use a single buffer for multiple purposes. Similar can be done with images and image views (\texttt{vk::ImageView}).
+Two most notable entries of this category are buffers (\texttt{vk::Buffer}) and Images (\texttt{vk::Image}). Once a handle to one of these resources is created, the application must query for the memory requirements of the object and then allocate device memory (\texttt{DeviceMemory}) with suitable properties. Finally, this memory must then be bound to the object. It's recommended to allocate a single device memory and bind several objects to various offsets, especially since its possible to have only 4096 allocated device memory at one time (on Windows at least, Linux doesn't suffer from such limitations). Since most API calls that take buffers as arguments will often take both offset and size, it's possible to use a single buffer for multiple purposes. Similar can be done with images and image views (\texttt{vk::ImageView}), where image view can enable access to only a part of the image.
 
-\subsection{The swapchain}
-The swapchain (\texttt{vk::SwapchainKHR} represents a set of images that can be presented to the screen. This is a rare example where driver handles the memory allocations for an image resource. These images can be presented to a surface (\texttt{vk::SurfaceKHR}). \texttt{vk::SurfaceKHR} is an abstraction over several possible surface types, ranging from Win32 surface, all the way to MacOS surface. Note that both of these objects are a part of \texttt{VK\_KHR\_SWAPCHAIN} extension. Since Vulkan-capable devices can be compute only, the ability to present to a surface is not a part of the core specification but is included as an extension which support is optional.
+\subsection{The swapchain and the framebuffers}
+The swapchain (\texttt{vk::SwapchainKHR}) represents a set of images that can be presented to the screen. This is a rare example where driver handles the memory allocations for an image resource. These images can be presented to a surface (\texttt{vk::SurfaceKHR}). \texttt{vk::SurfaceKHR} is an abstraction over several possible surface types, ranging from Win32 surface, all the way to Android surface. Note that both of these objects are a part of \texttt{VK\_KHR\_SWAPCHAIN} extension. Since Vulkan-capable devices can be compute only, the ability to present to a surface is not a part of the core specification but is included as an extension which support is optional. When swapchain is used with the raster pipeline, each image needs to be bound to a framebuffer (\texttt{vk::Framebuffer}). It's also possible to add more than one image - unlike in OpenGL, the image for storing the data for the depth and stencil tests needs to be explicitly created and bound to a framebuffer.  
 
-\subsection{The pipeline}
+\subsection{The pipeline and shaders}
 There are three types of pipelines (\texttt{vk::Pipeline}) in Vulkan:
 \begin{itemize}
 	\item{Compute pipeline}
@@ -241,30 +239,93 @@ There are three types of pipelines (\texttt{vk::Pipeline}) in Vulkan:
 	\item{Ray tracing pipeline}
 \end{itemize}
 
-Pipelines are central objects that describe how 
-Each of the pipelines will contain a reference to one or more shaders. Shaders are encapsulated with shader modules (\texttt{vk::ShaderModule} which need to be loaded as SPIR-V binaries, but shaderc (distributed with LunarG SDK) can be used to compile GLSL source files into SPIR-V code at runtime.
+Pipelines are objects that define which shaders will participate in rendering and, depending on their type, can define certain aspects of rendering. For example, settings on how and if triangles are culled are set in the raster pipeline. For the most part pipelines in Vulkan are immutable, so in order to change almost anthing in the pipeline (like swapping out a shader), a whole new pipeline needs to be constructed. Since pipeline construction is one of more time intensive workloads in Vulkan, pipeline caches (\texttt{vk::PipelineCache}) have been created that can store parts of previously constructed pipelines which are then reused when constructing new, similar pipelines. It's also advised to construct pipelines asynchronusly and ahead of time.
+Shaders are encapsulated in shader modules (\texttt{vk::ShaderModule}) which take a SPIR-V binary format. It's possible to compile GLSL (and more recently HLSL) source code to SPIR-V binary format using glslangValidator, but it's also possible to compile them at runtime using the shaderc library. Both glslangValidator and shaderc are distributed with LunarG SDK.
 
-\section{Patterns in Vulkan applications}
+\subsection{Descriptor sets and push constants}
+Descriptor sets (\texttt{vk::DescriptorSet}) are the interfaces between the shaders of the pipeline and the data that needs to be accessible from those shaders. Each descriptor set has one or more bindings. It's possible to bind various resources to a descriptor set, like samplers, images, buffer and acceleration strucutres (if the ray tracing extension is used). This is how things like materials, textures, lighting data and other scene data is passed to the shaders.
+Push constants is a small buffer (often only 256 bytes) that can be written to directly. This is often used for small amount of data that is constant over the length of a frame (such as view and projection matrices). It's can also be used for data pertaining to the following draw call and in that case it's updated before each new draw call.
 
+\subsubsection{The render pass}
+
+\section{VK\_KHR\_ray\_tracing extension}
+On 27th of November 2018., Khronos released Vulkan revision 1.1.92.0 which introduced \texttt{VK\_NV\_ray\_tracing} extension, which enabled the utilization of specialized hardware of Nvidia Turing GPUs for real-time raytracing. Roughly a year and a half later, on 17th of March 2020. Khronos has released \texttt{VK\_KHR\_ray\_tracing} extension that has several advantages over the NV variant:
+\begin{itemize}
+	\item{The extension is vendor neutral, making it more likely for vendors other than Nvidia to support it.}
+	\item{Extension offers more flexibility in building acceleration structures.}
+\end{itemize}
+
+At the time of writing of this paper, the extension is still in beta and feedback is being taken from the develpers using it.
+
+The extension itself introduces a several new concepts to Vulkan:
+\begin{itemize}
+	\item{Acceleration structures}
+	\item{Ray tracing shaders}
+	\item{Shader binding table}
+	\item{Ray tracing pipeline}
+\end{itemize}
+
+\subsection{Acceleration structures}
+Acceleration structures (\texttt{vk::AccelerationStructure}) are objects used to accelerate ray tracing. Instead of testing each ray for intersection with each and every triangle in the scene, a BVH is constructed that reduces complexity of the search from O(n) to O(logn). There are two types of acceleration structures in the API. Bottom acceleration structures (BLAS) can hold one or more geometries. Each geometry consists of a list of vertices (which can be indexed). It's possible to attach a transformation to the BLAS. Top acceleration structures (TLAS) reference BLASes. Each instance of BLAS is given a unique identifier (even if it references the same BLAS) which is later available in the shader.
+
+Acceleration structures are usually built on the GPU, but with the new extension, it's now possible to build them on the CPU and upload them to the GPU later. In cases where GPU is under a heavy load while the CPU has one or more cores idle, it's now possible to have acceleration structure be build using those idle cores, balancing the workload between the GPU and the CPU.
+
+The actual process of building the acceleration structure is handled by the driver. It's possible to instruct the driver to build the structure with ray tracing speed or speed of the build itself being prioritized. Acceleration structures, if so specified during their creation, can also be updated, which is faster than rebuilding it. Not all acceleration structures are suitable for updates - where tree with branches swaying on the wind would be good acceleration structure to update, one depicting an object which is exploding would not.
+
+\subsection{Ray tracing shaders}
+This extension introduces several new shader types:
+\begin{itemize}
+	\item{Ray generation shader}
+	\item{Any hit shader}
+	\item{Closest hit shader}
+	\item{Miss shader}
+	\item{Intersection shader}
+	\item{Callable shader}
+\end{itemize}
+
+Since the shaders themselves are not a part of Vulkan API, they are introduces as a SPIR-V extension \texttt{SPV\_KHR\_ray\_tracing}
+
+\subsubsection{Ray generation shader}
+Ray tracing pipeline is entered similarly to a compute pipeline. A workload is submitted in three dimensions. First two dimensions are often used as screen dimensions in pixels, while the third one is usually set to 1, or can be used as a number of samples per pixel. For each 3D coordinate, a ray generation shader is invoked. The most often use of this shader is to calculate the trajectory of the ray passing through the designated pixel, trace a ray (\texttt{traceRayEXT} function) and write the result in an image. It's possible to define the segment of the ray that the tests will be perfomed on, serving a similar purpose to far and near plane of the scene frustum.
+
+\subsubsection{Any hit shader}
+Once traceRayEXT is invoked, the hardware tests for intersections between the triangles of the TLAS given and the ray itself. For each triangle hit, this shader is invoked. It's advised to keep these type of shaders short and fast, since it gets invoked many times per ray. This shader is optional and doesn't need to be implemented.
+
+\subsubsection{Closest hit shader}
+After the ray is tested agains all of the TLAS, this shader is invoked over the closest intersection found.
+
+\subsubsection{Miss shader}
+If no intersection is found between the TLAS and the ray, this shader is invoked. This can be used to sample a cube map in order to render a skybox around the camera, or can be used to signal that there is no obstruction between the ray origin and the ray target, which is very useful for shadow testing.
+
+\subsubsection{Intersection shader}
+While the geometry will usually be defined as a set of triangles, it's possible to define it as any object, as long as it can be fit within an axil aligned bounding box (AABB). If that is the case, the testing will be done against the AABBs and on hit the intersection shader will be invoked, making it possible to calculate if and how the ray hits the bounded object. This shader needs to be defined only if TLAS contains a BLAS whose geometry type is AABB.
+
+\subsubsection{Callable shader}
+Callable shaders are shaders that can be called from other programmable shaders. Due to paralellism of the GPU, the driver might be able to better optimize the calls than if simple functions were invoked.
+
+\subsection{Shader binding table}
+With standard rasterization, various objects with different properties can be rendered one after another, swaping the shaders in and out as needed. When it comes to ray tracing, the ray can hit any object in the scene, requiring all shader to be available at the same time. Shader binding table holds the handles to every shader that could be invoked during the ray tracing process. The handles are divided into groups. Ray generation shader and miss shaders are in their own separate groups, while any hit shaders and closest hit shaders from a hit group. Shader binding table is referenced in two contexts - first when initially invoking the ray generation shaders from within the command buffer, second from within shaders for recursive calls.
+
+\subsection{Ray tracing pipeline}
+Ray tracing pipeline is quite a bit simpler than it's raster counter part since there isn't much to setup. It's main use is to bind the various shaders and hit groups in a single object. 
 
 \chapter{Implementation of a simple ray traced application}
+The goal is to create an application that use the ray tracing pipeline and components to render a voxelized space to the screen. The application has been developed with several switches that toggle certain aspects of the application on or off. Two of the most important ones are \texttt{RTX} and \testtt{OPTIX_DENOISER}.
 
 \chapter{Conclusion}
-Ray tracing simplifies a lot of concepts which, when using standard rasterization, need to be simulated by complex algorithms. When properly implemented, ray tracing will produce soft shadows, accurate reflections and detailed global illumination, and will do so inherently.
+Ray tracing simplifies a lot of concepts which, when using rasterization, need to be simulated by complex algorithms. When properly implemented, ray tracing produces soft shadows, accurate reflections and detailed global illumination, and does so inherently.
 
 Its main drawback is its prohibitive cost - while GPUs today are technically capable of running the algorithm in real-time, it just isn't fast enough to do everything we'd like naively, requiring some kind of compromise:
 \begin{itemize}
 	\item limiting ray tracing to only certain aspects of the scene (only shadows, only reflections or only global illumination), while using rasterization for the rest
-	\item ray tracing with a low number of samples per pixel, resulting in noisy images that need to be denoised
+	\item ray tracing with a low number of samples per pixel, resulting in noisy images that needs to be denoised
 	\item ray tracing at lower resolutions using one of the upscaling techniques to get the full resolution image
 	\item accumulating lighting and other over several frames, creating a higher quality renders, but with visible lighting latency and artefacts
 \end{itemize}
 
 Methods enumerated above are only a few possible optimizations and many implementations often use more than one of them. Especially interesting is rendering at a lower resolution and upscaling - Nvidia has been developing a deep learning powered technique called DLSS (Deep Learning Super Sampling) which runs in constant time, but produces very good results.
 
-Finally, it wouldn't be fair to ignore the recent improvements to rasterization - Unreal Engine 5 \cite{unreal} has recently been announced using two new technologies - Nanite and Lumin. While not many details are available yet, they seem to be able to produce images at a comparable quality to ray traced renders, possibly at a lower cost.
-
-With all that in mind, it is abundantly clear that ray tracing will not be replacing rasterization in any foreseeable future. It will be used more often though, especially as more powerful hardware becomes available.
+However drastic the advancements in raytracing have been in few recent years, the (realtime) rendering industry has been using rasterization ever since GPUs were invented, developing the field for more than 30 years. With that in mind, it is abundantly clear that ray tracing will not be replacing rasterization in any foreseeable future. It will be used more often though, especially as more powerful hardware becomes available.
 
 \bibliography{literatura}
 \bibliographystyle{fer}
