@@ -309,8 +309,125 @@ With standard rasterization, various objects with different properties can be re
 \subsection{Ray tracing pipeline}
 Ray tracing pipeline is quite a bit simpler than it's raster counter part since there isn't much to setup. It's main use is to bind the various shaders and hit groups in a single object. 
 
+
 \chapter{Implementation of a simple ray traced application}
-The goal is to create an application that use the ray tracing pipeline and components to render a voxelized space to the screen. The application has been developed with several switches that toggle certain aspects of the application on or off. Two of the most important ones are \texttt{RTX} and \testtt{OPTIX_DENOISER}.
+The goal is to create an application that renders a voxelized space to the screen. The application can be run in two configurations:
+\begin{itemize}
+	\item using a raster pipeline
+	\item using a ray tracing pipeline
+\end{itemize}
+
+Raster pipeline has been developed first to be used as a baseline, to compare it's performance to the performance of the ray tracing pipeline.
+
+The application can be divided into three main parts:
+\begin{itemize}
+	\item{Generation and meshing of the chunks}
+	\item{Rasterizer}
+	\item{Ray tracer}
+\end{itemize}
+
+\section{Generation and meshing of the chunks}
+This part of the application has mostly been covered in the chapter 3. Each block in the chunk can either be a completely transparent air block or a completely opaque solid block. It's possible to specify the the dimensions of the chunk (NxNxN, all dimensions will be the same), the number of chunks that will be rendered (MxMx1, all chunks are laid on the same y plane) and the percentage of the chunk that is solid. For this example, each chunks is 32x32x32 iun size, there are 32x32x1=1024 chunks and 10\% of the chunks are solid blocks. The chunks are generated in three steps:
+\begin{itemize}
+	\item{A vertex array is created, containing each of 33x33x33=35,937 possible vertex positions. A single one is used for all of the chunks.}
+	\item{For each chunks, a three dimensional array is filled with random values: \texttt{blocks[i][j][k] = rand() \% 10 == 0;}}
+	\item{Greedy meshing algorithm is executed for each chunk, creating a single index array that references the vertex array previously created}
+\end{itemize}
+
+An additional optimization has been made to the greedy mesher - each plane of the chunk is generated in a separate thread.
+
+The vertex and all of the index arrays are copied to the GPU in their own buffers.
+
+\section{Rasterizer}
+When raster pipeline configuration is selected, phong shading with a single point light is used to shade all of the blocks.
+
+\section{Ray tracer}
+In case that the application was run in any of the two ray tracing configurations, a complete ray tracing pipeline is setup. The shaders were written to demonstrate smooth shadows and perfect reflections, two things that are very difficult to achieve with a raster pipeline. Following data is made available to the shaders:
+\begin{itemize}
+	\item{the acceleration structure}
+	\item{storage image as the render target}
+	\item{a storage buffer containing all the vertices for a chunk}
+	\item{an array of storage buffers containing all the indices for each chunk}
+	\item{an array of sample sets used when sampling the light source in shadow testing}
+	\item{view and projection matrices, camera position and definition of the light source}
+\end{itemize}
+
+First, in the ray generation shader, a single primary ray per pixel is shot. When the closest intersection with the ray is found, triangle ID with index and vertex arrays are used to determine the vertices and the normal of the triangle. The light source is modeled as four coplanar points describing a rectangle. First, a dot product is calculated between the normal of the hit triangle and vectors going from the intersection towards each of the light corners. If at least one result is positive, a shadow test is performed.
+Shadow test involves picking one of the sample sets from the array. The samples are calculated using multi-jittered sampling on a unit rectangle. This is then superimposed over the light source and, in this case, 25 samples are chosen. A ray is shot from the intersection towards each of the sample and the shadow factor is determined as number of samples over (1 + number of obstructed samples). Diffuse factor is calculated as an average of the dot product between the hit triangle normal and the vector towards each of the corners of the light source. Shadow factor and diffuse factor are then multiplied with the colour of the triangle (in this case, solid green) to get the base colour. If reflections are enabled, a new reflected ray is shot from the intersection, repeating the whole process recursively up to a predefined depth. On each layer of recursion the base colour of current layer and the base colour of the layer deeper in the recursion are combined in a ratio 3:1.
+
+Once the resulting image is produced, if denoising is enabled, the image is sent to the denoiser for post processing. Either way, the image is then copied to the swapchain and presented to the screen.
+
+\section{Performance measurements}
+All of the testing is done on the following machine:
+\begin{center}
+\begin{tabular}{|c|c|}
+	\hline
+	Component type & Component used \\
+	\hline
+	CPU & Intel Core i9-9900KS            \\
+	\hline
+	GPU & Nvidia GeForce RTX 2080Ti   \\
+	\hline
+	RAM & 32GB DDR4 3600CL16         \\
+	\hline
+\end{tabular}
+\end{center}
+
+The same scene is used for each test. It consists of 1024 32x32x32 chunks arranged in a 32x32x1 pattern. 10\% of each chunk is randomly filled with the opaque blocks, but the seed for the random function is set at the start of the program, so the same scene consisting of 30,917,848 triangles is generated on every run. Resolution is set to 1280x720.
+
+Performance is calculated as average frame time over 5 seconds. The camera is not moved during that period.
+
+First test is a comparison between the raster and raytracing pipelines. There are no calcuations in the shaders, if a block is present, the pixel is coloured in a solid colour. Since the program has to be recompiled in order to change the rendering technique, the camera is positioned in the rougly same position and orientation. Whole scene is visible in the frame. Interestingly, it turns out that raytracing is about four times faster, at least in this quite unrealistic case:
+\begin{center}
+\begin{tabular}{|c|c|}
+	\hline
+	Test & Average frame time \\
+	\hline
+	Rasterization & ~4.50ms \\
+	\hline
+	Ray tracing & ~1.15ms \\
+	\hline
+\end{tabular}
+\end{center}
+
+Following tests compare impacts of shadows (S), reflections (R) and denoising (D) on the frame times. All of these can be toggled during runtime, so each test is run on the exactly same frame.
+\begin{center}
+\begin{tabular}{|c|c|}
+	\hline
+	Test & Average frame time \\
+	\hline
+	All off &  2.34ms \\
+	\hline
+	Only shadows & ~4.50ms \\
+	\hline
+	Only reflections & ~1.15ms \\
+	\hline
+	Only denoising & ~1.15ms \\
+	\hline
+	Shadows + reflections & ~1.15ms \\
+	\hline
+	Shadows + denoising & ~1.15ms \\
+	\hline
+	Reflections + denoising & ~1.15ms \\
+	\hline
+	All on & ~1.15ms \\
+	\hline
+\end{tabular}
+\end{center}
+
+\section{Possible improvements and expansions}
+The application can be improved in several ways. Firstly, the greedy mesher, while meshing each of six slice sets concurrently, does mesh them one chunk after another, and it does so on only six threads at the time. The concurrent code is also only two times faster than the serial one, most likely due to the overhead of creating and destroying threads. The CPU also never goes above 40\% utilization, since it only uses at most 37.5\% of threads available (on the test system). Using thread pools and generating all of the chunks in parallel (or at least in batches that are at least as large as the number of threads available on the CPU) could improve the performance significantly.
+Greedy mesher is capable of processing chunks that are made of only two types of blocks. Expanding it to be able to use an arbitrary number of block types should be relatively straightforward.
+
+Light in the ray tracer is not attenuated, this feature could be implemented, but would required the redesign of how colours are blended together.
+
+The ray tracer only works with a single light source. Adding more light sources would lineary increase the required number of rays per each intersection, so a better approach would be required. Instead of taking all of the samples of all of the lights, only a single sample could be taken per light source. This would still lineary increase the required number of rays per intersection, albeit a bit slower. A step further would be sampling only a certain amount of light sources per intersection, and doing so only for light sources that are within the certain distance from the intersection.
+
+The ray tracing model does not account for colour bleed from nearby surfaces. This could be resolved similarly to shadows. Instead of a rectangular sample set, one would be derived from a half dome. A relatively short rays would be shot towards the sample points, blending the hit colours with the colour of the intersection.
+
+Ambient occlusion could be implemented using half domes. Each ray would be fairly short and tested whether it hits the nearby surface or not.
+
+Denoiser currently only takes the ray tracing output image, but the API can also recieve additional information in the form of an albedo and normal render. A raster pipeline running parallel to the ray tracer could be set, writing this data to images that could then be passed to the denoiser along with the ray tracing output image, producing better results.
 
 \chapter{Conclusion}
 Ray tracing simplifies a lot of concepts which, when using rasterization, need to be simulated by complex algorithms. When properly implemented, ray tracing produces soft shadows, accurate reflections and detailed global illumination, and does so inherently.
@@ -325,7 +442,7 @@ Its main drawback is its prohibitive cost - while GPUs today are technically cap
 
 Methods enumerated above are only a few possible optimizations and many implementations often use more than one of them. Especially interesting is rendering at a lower resolution and upscaling - Nvidia has been developing a deep learning powered technique called DLSS (Deep Learning Super Sampling) which runs in constant time, but produces very good results.
 
-However drastic the advancements in raytracing have been in few recent years, the (realtime) rendering industry has been using rasterization ever since GPUs were invented, developing the field for more than 30 years. With that in mind, it is abundantly clear that ray tracing will not be replacing rasterization in any foreseeable future. It will be used more often though, especially as more powerful hardware becomes available.
+However drastic the advancements in ray tracing have been in few recent years, the (realtime) rendering industry has been using rasterization ever since GPUs were invented, developing the field for more than 30 years. With that in mind, it is abundantly clear that ray tracing will not be replacing rasterization in any foreseeable future. It will be used more often though, especially as more powerful hardware becomes available.
 
 \bibliography{literatura}
 \bibliographystyle{fer}
@@ -339,13 +456,13 @@ However drastic the advancements in raytracing have been in few recent years, th
 \hspace*{\fill} {\bf Sa\v{z}etak} \hspace*{\fill} \par
 \vspace*{25pt}
 
-U ovom radu razrađen je prikaz konačnog vokseliziranog prostora upotrebom sklopovski ubrzanog algoritma praćenja zrake. Uspoređena je standardna rasterizacija s algoritmom praćenja zraka te su opisani prednosti i mane jednog nad drugim. Posebna pažnja dana je načinu na koji Vulkan izlaže sklopovski ubrzano praćenje zrake kroz ekstenziju VK\_KHR\_RAY\_TRACING. Konačno, dan je malen Vulkan primjer koji demonstrira osnovnu implementaciju algoritma praćenja zrake.
+U ovom radu razrađen je prikaz konačnog vokseliziranog prostora upotrebom sklopovski ubrzanog algoritma praćenja zrake. Uspoređena je standardna rasterizacija s algoritmom praćenja zraka te su opisani prednosti i mane jednog nad drugim. Posebna pažnja dana je načinu na koji Vulkan izlaže sklopovski ubrzano praćenje zrake kroz ekstenziju VK\_KHR\_RAY\_TRACING. Konačno, opisan je malen Vulkan primjer koji demonstrira osnovnu implementaciju algoritma praćenja zrake.
 
 \kljucnerijeci{algoritam praćenja zrake, Vulkan, voksel, sklopovsko ubrzanje}
 
 \engtitle{Rendering of Voxelized Space with Vulkan Using Hardware Accelerated Ray Tracing}
 \begin{abstract}
-This paper explores the real-time representation of finite voxelized space using hardware-accelerated ray tracing. It compares standard rasterization to ray tracing and outlines the benefits and drawbacks of one over the other. It's explored how Vulkan exposes hardware ray tracing capabilities through its  VK\_KHR\_RAY\_TRACING extension. Finally, a small Vulkan example is given that shows a basic implementation of the ray tracing algorithm.
+This paper explores the real-time representation of finite voxelized space using hardware-accelerated ray tracing. It compares standard rasterization to ray tracing and outlines the benefits and drawbacks of one over the other. It's explored how Vulkan exposes hardware ray tracing capabilities through its  VK\_KHR\_RAY\_TRACING extension. Finally, a small Vulkan example is described that shows a basic implementation of the ray tracing algorithm.
 
 \keywords{ray tracing, Vulkan, voxel, hardware acceleration}
 \end{abstract}
