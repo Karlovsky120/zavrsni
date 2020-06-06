@@ -3,11 +3,42 @@
 \usepackage{graphicx}
 \usepackage{wrapfig}
 \usepackage{listings}
+\usepackage{float}
+\usepackage{xcolor}
 
 \lstset{
-	basicstyle=\footnotesize,
-	numbers=left,
-	tabsize=2
+basicstyle=\footnotesize,
+numbers=left,
+tabsize=2
+}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\colorlet{punct}{red!60!black}
+\definecolor{background}{HTML}{EEEEEE}
+\definecolor{delim}{RGB}{20,105,176}
+\colorlet{numb}{magenta!60!black}
+
+\lstdefinestyle{cppstyle}{
+backgroundcolor=\color{backcolour},
+commentstyle=\color{purple},
+keywordstyle=\color{blue},
+numberstyle=\tiny\color{codegray},
+stringstyle=\color{red},
+basicstyle=\ttfamily\scriptsize,
+breakatwhitespace=true,
+breaklines=true,
+captionpos=b,
+keepspaces=true,
+numbers=left,
+numbersep=5pt,
+showspaces=false,
+showstringspaces=false,
+showtabs=false,
+tabsize=2
 }
 
 \graphicspath{{./images/}}
@@ -34,7 +65,7 @@
 
 Ever since OpenGL 1.0 was released in 1992., the computer hardware industry has been continuously improving on what GPUs are capable of. Today's graphics cards are boasting FP performance of over 10 TFLOPS, making them more than $10^{12}$ times faster than the ones initially released with OpenGL 1.0. While OpenGL has changed over the last 20 years (current version 4.6), it can no longer extract the full potential of the graphics cards built with modern architectures. This is why Vulkan was created, a new API designed from ground up for the modern GPU architectures. It is a more advanced API, leaving more control in the hands of the application, whereas in OpenGL a lot of operations were handled by the GPU drivers.
 
-Modern graphics cards have reached another important milestone within the last few years. While realtime rendering has been done almost exclusively using rasterization, it has now become possible to render significant parts of the scene using ray tracing, such as shadow, reflection and global illumination. There are implementations today that even render the whole scene solely using ray tracing. A whole new pipeline has been created for modern graphic APIs (including Vulkan) that can utilize hardware to accelerate certain aspects of ray tracing, most notably ray triangle intersections. This paper will first explore how to efficiently represent voxelized space on the GPU and then render it using the new ray tracing pipeline.
+Modern graphics cards have reached another important milestone within the last few years. While realtime rendering has been done almost exclusively using rasterization, it has now become possible to render significant parts of the scene using ray tracing, such as shadow, reflection and global illumination. There are implementations today that even render the whole scene solely using ray tracing. A whole new pipeline has been created for modern graphic APIs (including Vulkan) that can utilize hardware to accelerate certain aspects of ray tracing, most notably ray triangle intersections. This paper will first explore how to efficiently represent voxelized space on the GPU and then render it using the new ray-tracing pipeline.
 
 \chapter{Used tools and technologies}
 \section{C++}
@@ -57,7 +88,7 @@ Vulkan is released as a C99 header file. Since its initial release, more than se
 
 Along with Vulkan, a new standard for programmable shaders was developed, SPIR-V. It can be compiled from GLSL (and recently HLSL) source code ensuring more precise interpretation of the specification, addressing many issues that stemmed from GLSL and HLSL shaders behaving differently on different vendor hardware.
 
-Throught this paper, Vulkan 1.2.141 used via C++ bindings.
+Throughout this paper, Vulkan 1.2.141 used via C++ bindings.
 
 \section{LunarG SDK}
 
@@ -74,370 +105,675 @@ GLFW is a Graphics Library FrameWork originally developed for OpenGL. It a simpl
 Optix denoiser \cite{nvidia_optix} is a part of the Nvidia Optix SDK that can be used standalone. It takes noisy images produced by ray tracing and outputs a denoised image. While there exists a more advanced variant that takes two additional images - one representing the albedo colour of each fragment and the other with the normal of each fragment, it isn't used in this paper.
 
 \chapter{Representation of voxelized space using greedy meshing}
-Voxelized space is represented by descreete elements at regular intervals, called voxels. Each voxel contains a single value, denoting whether it's opaque or transparent. Opaque voxels will be drawn, while transparent voxels will be treated as empty. To manage them easier, groups of 32x32x32 voxels are grouped into chunks. Both raster and ray tracing pipelines require triangles for input, so the question is how to transform chunks into a 3D mesh of triangles.
+Voxelized space is represented by discrete elements at regular intervals, called voxels. Each voxel contains a single value, denoting whether it's opaque or transparent. Opaque voxels will be drawn, while transparent voxels will be treated as empty. To manage them easier, groups of 32x32x32 voxels are grouped into chunks. Both raster and ray tracing pipelines require triangles for input, so the question is how to transform chunks into a 3D mesh of triangles.
 
 \section{The naive method}
-The simplest way to generate a mesh from a chunks is to iterate through each and every voxel and check whether they are air or not. If the voxel is air, generate two triangles per voxel side, for a total of 12 triangles per voxel. The worst case scenario is a chunk filled with opaque voxels and in that case the algorithm creates 393,216 triangles. This method is fast thought, and each voxel relies only its own value.
+The simplest way to generate a mesh from a chunk is to iterate through every voxel and check whether they are opaque or not. If the voxel is opaque, generate two triangles per voxel side, for a total of 12 triangles per voxel. The worst-case scenario is a chunk filled with opaque voxels and in that case, the algorithm creates 393,216 triangles. This method is fast thought, and each voxel relies only on its value.
 
 \section{Optimizing the naive method}
-A simple optimization can greatly reduce the number of triangles created by the naive method. Each neighbouring voxel is checked and a pair of triangles is created only if the neighbour is transparent. The worst case scenario from the previous example generates only 12,288 triangles. Note that this is no longer the worst case scenario for the optimized algorithm. That honour goes to a chunk filled 50\% with voxels spaced in checkerboard patter. In this case, number of triangles created is 196,608, the half of the naive method. This scenario will be the worst case for every other algorithm explored.
+Simple optimization can greatly reduce the number of triangles created by the naive method. Each neighbouring voxel is checked and a pair of triangles is created only if the neighbour is transparent. The worst-case scenario from the previous example generates only 12,288 triangles. Note that this is no longer the worst-case scenario for the optimized algorithm. That honour goes to a chunk filled 50\% with voxels spaced in a checkerboard pattern. In this case, the number of triangles created is 196,608, half of the naive method. This scenario will be the worst case for every other algorithm explored.
 
 \section{Greedy meshing}
-Unlike previous methods that analyse the chunk voxel by voxel, greedy meshing works by dividing the chunk into single voxel slices across each of the axes. Since each slice has two faces (eg. horizontal slice has the top and the bottom face), the actual number of slices is six.
-For each slice, the algorithm looks for adjacent voxels and merges them into bigger rectangles. The algorithm creates only 12 triangles for a chunk filled with opaque voxels. One of the most important benefit of this algorithm which may not be apparent right away is in the fact that the triangle mesh is divided into slices. When a voxel is updated, instead of re-meshing the whole chunk, only six slices that lie on the surfaces of the updated voxel need to be re-meshed.
+Unlike previous methods that analyse the chunk voxel by voxel, greedy meshing works by dividing the chunk into slices across each of the axes. Since each slice has two faces (horizontal slice has the top and the bottom face), the actual number of slices is six.
+For each slice, the algorithm looks for adjacent voxels and merges them into bigger rectangles. The algorithm creates only 12 triangles for a chunk filled with opaque voxels. One of the most important benefit of this algorithm which may not be apparent right away is in the fact that the triangle mesh is divided into slices. When a voxel is updated, instead of re-meshing the whole chunk, only six slices that lie on the surface of the updated voxel need to be re-meshed.
 
 There are two optimizations made for this algorithm:
 \begin{itemize}
-	\item Chunks are padded with a single transparent block on each size. This removes the literal edge cases.
-	\item Meshes are often stored as a pair: a list of (unique) vertices and a list of indices. Since in most models a single vertex is shared between multiple triangles, this often more than halves the mesh memory footprint.
-	\item This implementation assumes there will be a lot of chunks created. This is why only a single vertex array which stores every possible vertex within a chunk is created. A chunk can be uniquely identified by only the index array.
+\item Chunks are padded with a single transparent block on each size. This removes the literal edge cases.
+\item Meshes are often stored as a pair: a list of (unique) vertices and a list of indices. Since in most models a single vertex is shared between multiple triangles, this often more than halves the mesh memory footprint.
+\item This implementation assumes there will be a lot of chunks created. This is why only a single vertex array which stores every possible vertex within a chunk is created. A chunk can be uniquely identified by its index array.
 \end{itemize}
 
-Here is the algorithm that processes slices on the plane perpendicular to the x-axis. The inputs are a three-dimensional array representing a chunks (padded with air around it) and an integer which denotes which side of the slice is being processed, while the output is the index array. There are several things to note:
+Here is the algorithm that processes slices parallel to the YZ plane. The inputs are a three-dimensional array representing a chunk (padded with the air around it) and an integer which denotes which side of the slice is being processed, while the output is the index array. There are several things to note:
 \begin{itemize}
-	\item \texttt{meshed} is a temporary array that keeps track of already processed voxels, \texttt{updateMeshed} updates it every time a new quad is added to the list
-	\item \texttt{pushRectangels} adds six new indices to the index array
-	\item \texttt{getVertexIndex} gets the index of a particular vertex in the vertex array
-	\item \texttt{P\_SIZE} is the padded size of a chunk (34 for a 32x32x32 chunk) while \texttt{CHUNK\_SIZE} is the actual size of the chunk (32 for a 32x32x32 chunk)
+\item \texttt{meshed} is a temporary array that keeps track of already processed voxels, \texttt{updateMeshed} updates it every time a new quad is added to the list
+\item \texttt{pushRectangels} adds six new indices to the index array
+\item \texttt{getVertexIndex} gets the index of a particular vertex in the vertex array
+\item \texttt{P\_SIZE} is the padded size of a chunk (34 for a 32x32x32 chunk) while \texttt{CHUNK\_SIZE} is the actual size of the chunk (32 for a 32x32x32 chunk)
 \end{itemize}
 
-\begin{lstlisting}[language=c++][frame=single]
+\begin{lstlisting}[language=c++, style=cppstyle, caption="Code for handling chunk slices parallel to the YZ plane", frame=single]
 std::vector<uint32_t> xSlice(bool blocks[P_SIZE][P_SIZE][P_SIZE], int32_t side) {
-	std::vector<uint32_t> slices;
-	for (uint32_t i = 1; i < CHUNK_SIZE + 1; ++i) {
-		bool meshed[CHUNK_SIZE][CHUNK_SIZE] = {};
-		for (uint32_t j = 1; j < CHUNK_SIZE + 1; ++j) {
-			for (uint32_t k = 1; k < CHUNK_SIZE + 1; ++k) {
-				if (meshed[j - 1][k - 1] == false
-					&& blocks[i][j][k] == true
-					&& blocks[i + side][j][k] == false) {
+std::vector<uint32_t> slices;
+for (uint32_t i = 1; i < CHUNK_SIZE + 1; ++i) {
+bool meshed[CHUNK_SIZE][CHUNK_SIZE] = {};
+for (uint32_t j = 1; j < CHUNK_SIZE + 1; ++j) {
+for (uint32_t k = 1; k < CHUNK_SIZE + 1; ++k) {
+if (meshed[j - 1][k - 1] == false
+&& blocks[i][j][k] == true
+&& blocks[i + side][j][k] == false) {
 
-					// Determine the height of the rectangle
-					uint32_t dim1 = k - 1;
-					do {
-						++dim1;
-					} while (meshed[j - 1][dim1 - 1] == false
-						&& blocks[i][j][dim1] == true
-						&& blocks[i + side][j][dim1] == false
-						&& dim1 < CHUNK_SIZE + 1);
+// Determine the height of the rectangle
+uint32_t dim1 = k - 1;
+do {
+++dim1;
+} while (meshed[j - 1][dim1 - 1] == false
+&& blocks[i][j][dim1] == true
+&& blocks[i + side][j][dim1] == false
+&& dim1 < CHUNK_SIZE + 1);
 
-					// Determine the width of the rectangle
-					uint32_t dim2 = j + 1;
-					do {
-						bool holeOrObstructionFound = false;
-						for (uint32_t m = k; m < dim1; ++m) {
-							if (blocks[i][dim2][m] == false
-								|| blocks[i + side][dim2][m] == true) {
-								holeOrObstructionFound = true;
-								break;
-							}
-						}
+// Determine the width of the rectangle
+uint32_t dim2 = j + 1;
+do {
+bool holeOrObstructionFound = false;
+for (uint32_t m = k; m < dim1; ++m) {
+if (blocks[i][dim2][m] == false
+|| blocks[i + side][dim2][m] == true) {
+holeOrObstructionFound = true;
+break;
+}
+}
 
-						if (holeOrObstructionFound) {
-							break;
-						}
+if (holeOrObstructionFound) {
+break;
+}
 
-						++dim2;
-					} while (dim2 < CHUNK_SIZE + 1);
+++dim2;
+} while (dim2 < CHUNK_SIZE + 1);
 
-					// Mark voxels as processed and update the slice with the quad
-					updateMeshed(meshed, j, k, dim1, dim2);
+// Mark voxels as processed and update the slice with the quad
+updateMeshed(meshed, j, k, dim1, dim2);
 
-					uint32_t v1 = getVertexIndex(i - 1, k - 1, j - 1);
-					uint32_t v2 = getVertexIndex(i - 1, k - 1, dim2 - 1);
-					uint32_t v3 = getVertexIndex(i - 1, dim1 - 1, j - 1);
-					uint32_t v4 = getVertexIndex(i - 1, dim1 - 1, dim2 - 1);
+uint32_t v1 = getVertexIndex(i - 1, k - 1, j - 1);
+uint32_t v2 = getVertexIndex(i - 1, k - 1, dim2 - 1);
+uint32_t v3 = getVertexIndex(i - 1, dim1 - 1, j - 1);
+uint32_t v4 = getVertexIndex(i - 1, dim1 - 1, dim2 - 1);
 
-					if (side == -1) {
-						pushRectangle(slices, v1, v2, v3, v4);
-					}
-					else {
-						pushRectangle(slices, v1, v3, v2, v4);
-					}
-				}
-			}
-		}
-	}
-	return slices;
+if (side == -1) {
+pushRectangle(slices, v1, v2, v3, v4);
+}
+else {
+pushRectangle(slices, v1, v3, v2, v4);
+}
+}
+}
+}
+}
+return slices;
 }
 \end{lstlisting}
 
-The algorithms for planes perpendicular to other two axes are analogus.
-
 \chapter{What is ray tracing and how it compares to rasterization}
-The goal of both rasterization and ray tracing is to take a scene made out of primitives (most often, triangles) and transform it into a two dimensional image that can be shown on a screen. How they both go about doing that is vastly different.
+The goal of both rasterization and ray tracing is to take a scene made out of primitives (most often, triangles) and transform it into a two-dimensional image that can be shown on a screen. How they both go about doing that is vastly different.
 
 \section{Ray tracing overview}
-Various light sources in our environment launch fotons into their surroundings. Those photons bounce against various surfaces and some of the land in our eyes. Simulating every photon that a light source produces is neither viable or very efficient. Instead, in ray tracing, only the fotons that hit the eye of the observer are traced back to their source. For each pixel of the screen, a ray is traced from the eye of the observer through the pixel and into the scene. This ray is called the primary ray. The closest intersecition of the ray with the scene geometry is found, called a ray hit. From this point, several new rays can be formed:
+Various light sources in our environment launch photons into their surroundings. Those photons bounce against various surfaces and some of them land in our eyes. Simulating every photon that a light source produces is neither viable or very efficient. Instead, in ray tracing, only the photons that hit the eye of the observer are traced back to their source. For each pixel of the screen, a ray is traced from the eye of the observer through the pixel and into the scene. This ray is called the primary ray. The closest intersection of the ray with the scene geometry is found, called a ray hit. From this point, several new rays can be formed:
 \begin{itemize}
-	\item Reflected ray
-	\item Refracted ray
-	\item Shadow rays
+\item Reflected ray
+\item Refracted ray
+\item Shadow rays
 \end{itemize}
 
-Reflected and refracted rays will be traced through the geometry of the scene, potentially creating new hits. The process will recursively repeat until a certain depth, or until the contribution the a ray becomes too insignificant. The shadow rays are shoot towards the light sources of the scene. If they don't intersect anything between the hit and the light source, the ray origin is considered lit by that light source. If the light source is a point light, a single ray is sufficient, generating hard shadows. For area lights, several points on the light are sampled and a ray is traced to each of them. This enables the generation of more realistic soft shadows.
+Reflected and refracted rays will be traced through the geometry of the scene, potentially creating new hits. The process will recursively repeat until a certain depth, or until the contribution of the ray becomes too insignificant. The shadow rays are shoot towards the light sources of the scene. If they don't intersect anything between the hit and the light source, the ray origin is considered lit by that light source. If the light source is a point light, a single ray is sufficient, generating hard shadows. For area lights, several points on the light are sampled and a ray is traced to each of them. This enables the generation of more realistic soft shadows.
 
-Approach described above will generate an image that will look realistic, but with a lot of noise, especially if area lights are used. This can be dealt with in two ways:
+The approach described above will generate an image that will look realistic, but with a lot of noise, especially if area lights are used. This can be dealt with in two ways:
 \begin{itemize}
-	\item Tracing more rays per pixel - instead of tracing a single ray trough the center of the pixel, multiple points on the pixel are sampled and a ray is traced through each. The final colour of the pixel is then the average result of each of the rays. In order for the image to converge, ie. for noise to be removed, the required number of rays per pixel s usually over a hundred, often several thousand. This is not viable for real time raytracing on current hardware, but will produce the results are closest to the ground truth.
-	\item Using a denoising algorithm on the final image - the final image can be processed by an algorithm that removes the noise. The image can often be supplemented with addtional data, like the image of the scene that is uniformly lit (which can be a product of raster pipeline) or an image that instead of the colour holds the value of the normal of each pixel of the image. This method is much faster and denoising algorithms today will often produce results that are almost indistinguishable from the ground truth.
+\item Tracing more rays per pixel - instead of tracing a single ray through the centre of the pixel, multiple points on the pixel are sampled and a ray is traced through each. The final colour of the pixel is then the average result of each of the rays. For the image to converge, ie. for noise to be removed, the required number of rays per pixel s usually over a hundred, often several thousand. This is not viable for real-time raytracing on current hardware, but will produce the results are closest to the ground truth.
+\item Using a denoising algorithm on the final image - the final image can be processed by an algorithm that removes the noise. The image can often be supplemented with additional data, like the image of the scene that is uniformly lit (which can be a product of raster pipeline) or an image that instead of the colour holds the value of the normal of each pixel of the image. This method is much faster and denoising algorithms today will often produce results that are almost indistinguishable from the ground truth.
 \end{itemize}
 
 An algorithm called path tracing takes ray tracing a step further. Once a hit is found, instead of tracing only several specific rays, many rays will be generated going in random directions. This method is used for offline rendering, where the quality of the image is more important than the speed at which it can be produced.
 
 \section{Rasterization overview}
-The list of vertices is first taken through a vertex shader. Vertex shader will general take two forms of input. Per vertex attribues and constant data. Per vertex attributes can be vertex position, vertex normal or some other data specifict to a vertex while the constant data are often camera and light positions. Vertex shaders are fully 
+The list of vertices is first taken through a vertex shader. The vertex shader will generally take two forms of input. Per vertex attributes and constant data. Per vertex attributes can be vertex position, vertex normal or some other data specific to a vertex while the constant data are often camera and light positions. Vertex shaders are fully programmable and are most often used to manipulate the position, orientation and scale of the models being drawn. Vertex shader outputs a vertex for each vertex it received. The GPU then performs primitive assembly, creating triangles out of three vertices. Triangles that are completely or partially out of the screen are clipped. It is then when the actual rasterization happens. Each of the triangles is discretized into fragments, which are then sent to the fragment shader. The fragment shader is where most of the light calculation is usually done. The shaded fragments are then displayed on the screen as pixels.
 
-Rasterization take an simplified but faster way to process the geometry. Each triangle is projected to the screen and turned into pixels. If the middle of the pixel is within the triangle, it will be considered a part of the triangle.
+While this method is a lot faster than ray-tracing, it's incapable of simulating shadows, reflections and other physical effects without using specialized structures and algorithms. Even then, the results are often noticeably inferior to ray-traced images.
 
-\chapter{Overview of Vulkan and its ray tracing extension}
-While OpenGL is still continuously being updated, there is only so much that can be done for an API that is almost three decades old. This is why Vulkan was created, designed from the ground up with the modern architecture of graphics cards in mind. It's a cross-platform graphics and compute API that can run on a variety of operating systems and which many devices can support. Due to all of this, Vulkan is a complex and extremely verbose API. While on the surface it might look like it's a lot more complex than OpenGL, the difference I much smaller than it appears to be on the first glance. A lot of complexity (and verbosity) comes from the fact that a lot of responsibility (and by extension, control) has been shifted from the driver to the application.
+Image 4.1 demonstrates the visual difference between rasterization and ray-tracing in Minecraft.
+\begin{center}
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{rtx_vs_ras.jpg}
+\caption{Ray-tracing (left) vs. rasterization (right)}
+\end{figure}
+\label{image:ras_vs_rtx}
+\end{center}
 
-As a result, a hello triangle program that might have taken 20 or so lines in OpenGL 1.0 now takes over 900 lines of code in Vulkan \cite{vulkan_tutorial}.
+\chapter{Overview of Vulkan and its ray-tracing extension}
+While OpenGL is still continuously being updated, there is only so much that can be done for an API that is almost three decades old. This is why Vulkan was created, designed from the ground up with the architecture of modern graphics cards in mind. It's a cross-platform graphics and compute API that can run on a variety of operating systems and which many devices support. Due to all of this, Vulkan is a complex and extremely verbose API. While on the surface it might look like it's a lot more complex than OpenGL, the difference I much smaller than it appears to be. A lot of complexity (and verbosity) comes from the fact that a lot of responsibility (and by extension, control) has been shifted from the driver to the application. As a result, a hello triangle program that might have taken 20 or so lines in OpenGL 1.0 now takes over 900 lines of code in Vulkan \cite{vulkan_tutorial}.
 
-There are several key points that make Vulkan more performant and more suitable for modern systems than OpenGL:
+Several key points make Vulkan more performant and more suitable for modern systems than OpenGL:
 \begin{itemize}
-	\item Low API overhead. Instead of issuing commands to the device one by one, multiple commands are recorded to command buffers which are then submitted to the GPU to be executed.
-	\item API makes no guarantees on order of execution of commands recorded to the submitted command buffer. The application needs to use pipeline and memory barriers to create dependencies between commands. In a well-written application, this means that commands will only be blocked by the commands that they depend on. This extends to other mechanism as well, often explicit dependencies need to be stated, giving the driver the freedom to arrange the workload in the most optimal way, while respecting those dependecies.
-	\item API has been written with multicore CPUs in mind. While it's not possible to concurrently record commands to the same command buffer from multiple threads, it is possible to create and (concurrently) record commands to secondary command buffers that can then be tied together in a primary command buffer.
-	\item API controls memory allocations. In OpenGL, all device memory allocations have been managed by the driver, whereas in Vulkan all memory allocations need to be explicitly managed by the application.
-	\item Most objects in the API are immutable. While this makes the API a bit more cumbersome to use, the driver can use this guarantee to make optimizations that weren't possible in OpenGL.
-	\item Better debugging support. Vulkan introduces the concept of validation layers - layers that can be placed between the application and the driver to ensure that calls to the API are valid and well-formed.
+\item Low API overhead. Instead of issuing commands to the device one by one, multiple commands are recorded to command buffers which are then submitted to the GPU.
+\item API makes no guarantees about the order of execution of commands recorded to the submitted command buffer. The application needs to use pipeline and memory barriers to create dependencies between commands. In a well-written application, this means that commands will only be blocked by the commands that they depend on. This extends to other mechanisms as well, often needing explicit dependencies to be stated, giving the driver the freedom to arrange the workload in the most optimal way, while respecting those dependencies.
+\item API has been written with multicore CPUs in mind. While it's not possible to concurrently record commands to the same command buffer from multiple threads, it is possible to create and (concurrently) record commands to secondary command buffers which can then be tied together in a primary command buffer.
+\item Application controls memory allocations. In OpenGL, all device memory allocations have been managed by the driver, whereas in Vulkan all memory allocations need to be explicitly managed by the application.
+\item Most objects in the API are immutable. While this makes the API a bit more cumbersome to use, the driver can use this guarantee to make optimizations that weren't possible with OpenGL.
+\item Better debugging support. Vulkan introduces the concept of validation layers - layers that can be placed between the application and the driver to ensure that calls to the API are valid and well-formed.
 \end{itemize}
 
 \section{Vulkan model overview}
 \subsection{Instance and device}
-The first object to be created when using Vulkan is an instance (\texttt{vk::Instance}). The application can specify which version of the API will be used, as well as enable various validation layers. The instance is the closest thing in Vulkan to OpenGLs global state. Once the instance is created, various physical devices can be enumerated (\texttt{vk::PhysicalDevice}), each representing specific Vulkan-compatible devices connected to the system. They can be queried for their capabilities and various extension support. Next step is to create a logical device (\texttt{vk::Device}) based on one of the physical devices. From this point on, the logical device facilitates most of applications communication with the API.
+The first object to be created when using Vulkan is an instance (\texttt{vk::Instance}). The application can specify which version of the API will be used, as well as enable various validation layers. The instance is the closest thing in Vulkan to OpenGLs global state. Once the instance is created, physical devices can be enumerated (\texttt{vk::PhysicalDevice}), each representing specific Vulkan-compatible devices connected to the system. They can be queried for their capabilities and extension support. Next step is to create a logical device (\texttt{vk::Device}) derived out of one of the physical devices. From this point on, the logical device facilitates most of the applications communication with the API.
 
 \subsection{Queues and command buffers}
-Most of communication between the application and the device is done with command pools (\texttt{vk::CommandPool}), command buffers (\texttt{vk::CommandBuffer}) and queues (\texttt{vk::Queue}). First, a command pool is created, connected to one of the queues available from the physical device. It's possible to then allocate one or more command buffers from this pool. Once the commands are recorded to the command buffer, it can be submitted to the queue for the device to execute it.
+Most of the communication between the application and the device is done with command pools (\texttt{vk::CommandPool}), command buffers (\texttt{vk::CommandBuffer}) and queues (\texttt{vk::Queue}). First, a command pool is created, connected to one of the queues available from the physical device. It's possible to then allocate one or more command buffers from this pool. Once the commands are recorded to the command buffer, it can be submitted to the queue for the device to execute it.
 
 \subsection{Synchronization}
 \subsubsection{Synchronization within buffers}
 All of the commands in a command buffer are executed asynchronously. Pipeline barriers act as execution barriers between various commands, ensuring various commands are executed after described pipeline stages. Each pipeline barrier can hold a reference to one or more image and buffer memory barriers (\texttt{vk::ImageMemoryBarrier} and \texttt{vk::BufferMemoryBarrier}), determining the order of the operations over those resources (eg. preventing read operations on a buffer or an image before all writes have been completed).
 
 \subsubsection{Synchronization between buffers}
-Submitting one command buffer before the other does not guarantee it will be executed first. On each command buffer submission, it's possible to supply one or more binary semaphores (\texttt{vk::Semaphore}) that the command buffer will wait on to be signalled before executing, or semaphores that will be signalled once the command buffer has completed its execution. Fences (\texttt{vk::Fence}) are used similarly, but they enable command buffer synchronization with the application (eg. waiting for an image to be rendered before attempting to present it on screen). In Vulkan 1.2, timeline semaphores have been introduced with the \texttt{VK\_KHR\_TIMELINE\_SEMAPHORE} extension. It enables more complex dependencies to be expressed with a single semaphore holding several points in time instead of being forced to use a binary semaphore between each of the steps.
+Submitting one command buffer before the other does not guarantee it will be executed first. On each command buffer submission, it's possible to supply one or more binary semaphores (\texttt{vk::Semaphore}) that the command buffer will wait on to be signalled before executing, or semaphores that will be signalled once the command buffer has completed its execution. Fences (\texttt{vk::Fence}) are used similarly, but they enable command buffer synchronization with the application (eg. waiting for an image to be rendered before attempting to present it on screen, fences are waited on the CPU). In Vulkan 1.2, timeline semaphores have been introduced with the \texttt{VK\_KHR\_TIMELINE\_SEMAPHORE} extension. It enables more complex dependencies to be expressed with a single semaphore holding several points in time instead of being forced to use a binary semaphore between each of the steps.
 
 \subsection{Memory management overview}
-Every Vulkan object created by the application will have its own handle. Once an object is created, the application has to keep track of it and destroy it once it's no longer needed. Most Vulkan objects don't need additional memory other than its own metadata. The two exceptions are pooled resources and application managed resources.
+Every Vulkan object created by the application will have its handle. Once an object is created, the application has to keep track of it and destroy it once it's no longer needed. Most Vulkan objects don't need additional memory other than their metadata. The two exceptions are pooled resources and application managed resources.
 
 \subsubsection{Pooled resources}
 Two examples of pooled resources are descriptor sets and command buffers. First a pool object (\texttt{vk::DescriptorPool} or \texttt{vk::CommandPool}) needs to be created from which desired objects are then allocated. The memory of these pools is managed by the device driver.
 
 \subsubsection{Application managed resources}
-Two most notable entries of this category are buffers (\texttt{vk::Buffer}) and Images (\texttt{vk::Image}). Once a handle to one of these resources is created, the application must query for the memory requirements of the object and then allocate device memory (\texttt{DeviceMemory}) with suitable properties. Finally, this memory must then be bound to the object. It's recommended to allocate a single device memory and bind several objects to various offsets, especially since its possible to have only 4096 allocated device memory at one time (on Windows at least, Linux doesn't suffer from such limitations). Since most API calls that take buffers as arguments will often take both offset and size, it's possible to use a single buffer for multiple purposes. Similar can be done with images and image views (\texttt{vk::ImageView}), where image view can enable access to only a part of the image.
+Two most notable entries of this category are buffers (\texttt{vk::Buffer}) and Images (\texttt{vk::Image}). Once a handle to one of these resources is created, the application must query for the memory requirements of the object and then allocate device memory (\texttt{vk::DeviceMemory}) with suitable properties. Finally, this memory must then be bound to the object. It's recommended to allocate a single device memory and bind several objects to various offsets, especially since its possible to have only 4096 device memories allocated at one time (on Windows at least, Linux doesn't suffer from such limitations). Since most API calls that take buffers as arguments will often take both offset and size, it's possible to use a single buffer for multiple purposes. Similar can be done with images and image views (\texttt{vk::ImageView}), where image view can lock access to only a part of the image.
 
 \subsection{The swapchain and the framebuffers}
-The swapchain (\texttt{vk::SwapchainKHR}) represents a set of images that can be presented to the screen. This is a rare example where driver handles the memory allocations for an image resource. These images can be presented to a surface (\texttt{vk::SurfaceKHR}). \texttt{vk::SurfaceKHR} is an abstraction over several possible surface types, ranging from Win32 surface, all the way to Android surface. Note that both of these objects are a part of \texttt{VK\_KHR\_SWAPCHAIN} extension. Since Vulkan-capable devices can be compute only, the ability to present to a surface is not a part of the core specification but is included as an extension which support is optional. When swapchain is used with the raster pipeline, each image needs to be bound to a framebuffer (\texttt{vk::Framebuffer}). It's also possible to add more than one image - unlike in OpenGL, the image for storing the data for the depth and stencil tests needs to be explicitly created and bound to a framebuffer.  
+The swapchain (\texttt{vk::SwapchainKHR}) represents a set of images that can be presented to the screen. This is a rare example where the driver handles the memory allocations for an image resource. These images can be presented to a surface (\texttt{vk::SurfaceKHR}). \texttt{vk::SurfaceKHR} is an abstraction over several possible surface types, ranging from Win32 surface, all the way to Android surface. Note that both of these objects are a part of \texttt{VK\_KHR\_SWAPCHAIN} extension. Since Vulkan-capable devices can only support compute, the ability to present to a surface is not a part of the core specification but is included as an extension. When swapchain is used with the raster pipeline, each image needs to be bound to a framebuffer (\texttt{vk::Framebuffer}). It's also possible to add more than one image - unlike in OpenGL, the image for storing the data for the depth and stencil tests needs to be explicitly created and bound to the framebuffer.
 
 \subsection{The pipeline and shaders}
 There are three types of pipelines (\texttt{vk::Pipeline}) in Vulkan:
 \begin{itemize}
-	\item{Compute pipeline}
-	\item{Graphics pipeline}
-	\item{Ray tracing pipeline}
+\item{Compute pipeline}
+\item{Graphics pipeline}
+\item{Ray tracing pipeline}
 \end{itemize}
 
-Pipelines are objects that define which shaders will participate in rendering and, depending on their type, can define certain aspects of rendering. For example, settings on how and if triangles are culled are set in the raster pipeline. For the most part pipelines in Vulkan are immutable, so in order to change almost anthing in the pipeline (like swapping out a shader), a whole new pipeline needs to be constructed. Since pipeline construction is one of more time intensive workloads in Vulkan, pipeline caches (\texttt{vk::PipelineCache}) have been created that can store parts of previously constructed pipelines which are then reused when constructing new, similar pipelines. It's also advised to construct pipelines asynchronusly and ahead of time.
+Pipelines are objects that define which shaders will participate in rendering and, depending on their type, can define certain aspects of rendering. For example, settings on how and if triangles are culled are set in the raster pipeline. Pipelines in Vulkan are immutable, so to change almost anything in the pipeline (like swapping out a shader), a whole new pipeline needs to be constructed. Since pipeline construction is one of more time-intensive workloads in Vulkan, pipeline caches (\texttt{vk::PipelineCache}) have been created that can store parts of previously constructed pipelines which are then reused when constructing new, similar pipelines. It's also advised to construct pipelines asynchronously and ahead of time.
 Shaders are encapsulated in shader modules (\texttt{vk::ShaderModule}) which take a SPIR-V binary format. It's possible to compile GLSL (and more recently HLSL) source code to SPIR-V binary format using glslangValidator, but it's also possible to compile them at runtime using the shaderc library. Both glslangValidator and shaderc are distributed with LunarG SDK.
 
 \subsection{Descriptor sets and push constants}
-Descriptor sets (\texttt{vk::DescriptorSet}) are the interfaces between the shaders of the pipeline and the data that needs to be accessible from those shaders. Each descriptor set has one or more bindings. It's possible to bind various resources to a descriptor set, like samplers, images, buffer and acceleration strucutres (if the ray tracing extension is used). This is how things like materials, textures, lighting data and other scene data is passed to the shaders.
-Push constants is a small buffer (often only 256 bytes) that can be written to directly. This is often used for small amount of data that is constant over the length of a frame (such as view and projection matrices). It's can also be used for data pertaining to the following draw call and in that case it's updated before each new draw call.
-
-\subsubsection{The render pass}
+Descriptor sets (\texttt{vk::DescriptorSet}) are the interface between the shaders and the data that needs to be accessible to those shaders. Each descriptor set has one or more bindings. It's possible to bind various resources to a descriptor set, like samplers, images, buffer and acceleration structures (if the ray-tracing extension is used). This is how materials, textures, lighting and other scene data is passed to the shaders.
+Push constants are a small buffer (often only 256 bytes) that can be written to directly during command buffer recording. This is often used for a small amount of data that is constant over the length of a frame, such as view and projection matrices. It can also be used for data about the following draw call and in that case, it should be updated before each new draw call.
 
 \section{VK\_KHR\_ray\_tracing extension}
-On 27th of November 2018., Khronos released Vulkan revision 1.1.92.0 which introduced \texttt{VK\_NV\_ray\_tracing} extension, which enabled the utilization of specialized hardware of Nvidia Turing GPUs for real-time raytracing. Roughly a year and a half later, on 17th of March 2020. Khronos has released \texttt{VK\_KHR\_ray\_tracing} extension that has several advantages over the NV variant:
+On 27th of November 2018., Khronos released Vulkan revision 1.1.92.0 which introduced \texttt{VK\_NV\_ray\_tracing} extension, enabling the utilization of specialized hardware of Nvidia Turing GPUs for real-time ray-tracing. Roughly a year and a half later, on the 17th of March 2020. Khronos has released \texttt{VK\_KHR\_ray\_tracing} extension that has several advantages over the NV variant:
 \begin{itemize}
-	\item{The extension is vendor neutral, making it more likely for vendors other than Nvidia to support it.}
-	\item{Extension offers more flexibility in building acceleration structures.}
+\item{The extension is vendor-neutral, making it more likely for vendors other than Nvidia to support it.}
+\item{Extension offers more flexibility in building acceleration structures.}
 \end{itemize}
 
-At the time of writing of this paper, the extension is still in beta and feedback is being taken from the develpers using it.
+At the time of writing of this paper, the KHR variant of the extension was still in beta
 
 The extension itself introduces a several new concepts to Vulkan:
 \begin{itemize}
-	\item{Acceleration structures}
-	\item{Ray tracing shaders}
-	\item{Shader binding table}
-	\item{Ray tracing pipeline}
+\item{Acceleration structures}
+\item{Ray tracing shaders}
+\item{Shader binding table}
+\item{Ray tracing pipeline}
 \end{itemize}
 
 \subsection{Acceleration structures}
-Acceleration structures (\texttt{vk::AccelerationStructure}) are objects used to accelerate ray tracing. Instead of testing each ray for intersection with each and every triangle in the scene, a BVH is constructed that reduces complexity of the search from O(n) to O(logn). There are two types of acceleration structures in the API. Bottom acceleration structures (BLAS) can hold one or more geometries. Each geometry consists of a list of vertices (which can be indexed). It's possible to attach a transformation to the BLAS. Top acceleration structures (TLAS) reference BLASes. Each instance of BLAS is given a unique identifier (even if it references the same BLAS) which is later available in the shader.
+Acceleration structures (\texttt{vk::AccelerationStructure}) are objects used to accelerate ray tracing. Instead of testing each ray for intersection with every triangle in the scene, a BVH that reduces the complexity of the search from O(n) to O(logn) is constructed. There are two types of acceleration structures in the API. Bottom acceleration structures (BLAS) can hold one or more geometries. Each geometry consists of a list of vertices (which can be indexed). It's also possible to attach a transformation to the BLAS. Top acceleration structures (TLAS) reference BLASes. Each instance of BLAS is given a unique identifier (even if it references the same BLAS) which is later available in the shader.
 
-Acceleration structures are usually built on the GPU, but with the new extension, it's now possible to build them on the CPU and upload them to the GPU later. In cases where GPU is under a heavy load while the CPU has one or more cores idle, it's now possible to have acceleration structure be build using those idle cores, balancing the workload between the GPU and the CPU.
+Acceleration structures are usually built on the GPU, but with the new extension, it's now possible to build them on the CPU and upload them to the GPU later. In cases where GPU is under a heavy load while the CPU has one or more cores idle, it's possible to build acceleration structure on those idle cores, balancing the workload between the GPU and the CPU.
 
-The actual process of building the acceleration structure is handled by the driver. It's possible to instruct the driver to build the structure with ray tracing speed or speed of the build itself being prioritized. Acceleration structures, if so specified during their creation, can also be updated, which is faster than rebuilding it. Not all acceleration structures are suitable for updates - where tree with branches swaying on the wind would be good acceleration structure to update, one depicting an object which is exploding would not.
+The actual process of building the acceleration structure is handled by the driver. It's possible to instruct the driver to build the structure with ray tracing speed or speed of the build itself being prioritized. Acceleration structures, if so specified during their creation, can also be updated, which is faster than rebuilding it. Not all acceleration structures are suitable for updates - where a tree with branches swaying on the wind would be good acceleration structure to update, one depicting an object which is exploding would not.
 
 \subsection{Ray tracing shaders}
 This extension introduces several new shader types:
 \begin{itemize}
-	\item{Ray generation shader}
-	\item{Any hit shader}
-	\item{Closest hit shader}
-	\item{Miss shader}
-	\item{Intersection shader}
-	\item{Callable shader}
+\item{Ray generation shader}
+\item{Any hit shader}
+\item{Closest hit shader}
+\item{Miss shader}
+\item{Intersection shader}
+\item{Callable shader}
 \end{itemize}
 
-Since the shaders themselves are not a part of Vulkan API, they are introduces as a SPIR-V extension \texttt{SPV\_KHR\_ray\_tracing}
+Since the shaders themselves are not a part of Vulkan API, they are introduced through a SPIR-V extension \texttt{SPV\_KHR\_ray\_tracing}
 
 \subsubsection{Ray generation shader}
-Ray tracing pipeline is entered similarly to a compute pipeline. A workload is submitted in three dimensions. First two dimensions are often used as screen dimensions in pixels, while the third one is usually set to 1, or can be used as a number of samples per pixel. For each 3D coordinate, a ray generation shader is invoked. The most often use of this shader is to calculate the trajectory of the ray passing through the designated pixel, trace a ray (\texttt{traceRayEXT} function) and write the result in an image. It's possible to define the segment of the ray that the tests will be perfomed on, serving a similar purpose to far and near plane of the scene frustum.
+Ray tracing pipeline is entered similarly to a compute pipeline. A workload is submitted in three dimensions. The first two dimensions are usually used as screen dimensions in pixels, while the third one is usually set to 1, or can be used as a number of samples per pixel. For each 3D coordinate, a ray generation shader is invoked. The most often use of this shader is to calculate the trajectory of the ray passing through the designated pixel, invoke ray tracing (\texttt{traceRayEXT} function) and write the result to an image. It's possible to define the segment of the ray that the tests will be performed on, serving a similar purpose to the far and near planes of the scene frustum.
 
 \subsubsection{Any hit shader}
-Once traceRayEXT is invoked, the hardware tests for intersections between the triangles of the TLAS given and the ray itself. For each triangle hit, this shader is invoked. It's advised to keep these type of shaders short and fast, since it gets invoked many times per ray. This shader is optional and doesn't need to be implemented.
+Once \texttt{traceRayEXT} is invoked, the hardware tests for intersections between the triangles of the TLAS and the ray. For each triangle hit, this shader is invoked. It's advised to keep these shaders short and fast since they get invoked many times per ray. This shader is optional and doesn't need to be implemented.
 
 \subsubsection{Closest hit shader}
-After the ray is tested agains all of the TLAS, this shader is invoked over the closest intersection found.
+After the ray is tested against all of the TLAS, this shader is invoked over the closest intersection found.
 
 \subsubsection{Miss shader}
-If no intersection is found between the TLAS and the ray, this shader is invoked. This can be used to sample a cube map in order to render a skybox around the camera, or can be used to signal that there is no obstruction between the ray origin and the ray target, which is very useful for shadow testing.
+If no intersection is found between the TLAS and the ray, this shader is invoked. This can be used to sample a cube map to render a skybox around the camera or to signal that there is no obstruction between the ray origin and the ray target, which is very useful for shadow testing.
 
 \subsubsection{Intersection shader}
-While the geometry will usually be defined as a set of triangles, it's possible to define it as any object, as long as it can be fit within an axil aligned bounding box (AABB). If that is the case, the testing will be done against the AABBs and on hit the intersection shader will be invoked, making it possible to calculate if and how the ray hits the bounded object. This shader needs to be defined only if TLAS contains a BLAS whose geometry type is AABB.
+While the geometry is usually defined as a set of triangles, it's possible to define it as an object, as long as it can fit within an axis-aligned bounding box (AABB). If that is the case, the testing will be done against the AABBs and on hit the intersection shader will be invoked, making it possible to calculate if and how the ray hits the bounded object. This shader needs to be defined only if TLAS contains a BLAS whose geometry type is AABB.
 
 \subsubsection{Callable shader}
-Callable shaders are shaders that can be called from other programmable shaders. Due to paralellism of the GPU, the driver might be able to better optimize the calls than if simple functions were invoked.
+Callable shaders are shaders that can be called from other programmable shaders. Due to the parallelism of the GPU, the driver is able to better optimize such calls opposed to if functions within the shaders were invoked.
 
 \subsection{Shader binding table}
-With standard rasterization, various objects with different properties can be rendered one after another, swaping the shaders in and out as needed. When it comes to ray tracing, the ray can hit any object in the scene, requiring all shader to be available at the same time. Shader binding table holds the handles to every shader that could be invoked during the ray tracing process. The handles are divided into groups. Ray generation shader and miss shaders are in their own separate groups, while any hit shaders and closest hit shaders from a hit group. Shader binding table is referenced in two contexts - first when initially invoking the ray generation shaders from within the command buffer, second from within shaders for recursive calls.
+With standard rasterization, various objects with different properties can be rendered one after another, swapping the shaders in and out as needed. When it comes to ray tracing, the ray can hit any object in the scene, requiring all of the shaders to be available at the same time. Shader binding table holds the handles to every shader that could be invoked during the ray tracing process. The handles are divided into groups. Ray generation shader and miss shaders are in their separate groups, while any hit shaders and closest hit shaders together from hit groups. Shader binding table is referenced in two contexts - first when initially invoking the ray generation shaders from within the command buffer, second from within shaders for recursive ray-tracing.
 
 \subsection{Ray tracing pipeline}
-Ray tracing pipeline is quite a bit simpler than it's raster counter part since there isn't much to setup. It's main use is to bind the various shaders and hit groups in a single object. 
+Ray tracing pipeline is quite a bit simpler than it's raster counterpart since there isn't much to set up. Its main use is to bind the various shaders and hit groups into a single object.
 
 
 \chapter{Implementation of a simple ray traced application}
-The goal is to create an application that renders a voxelized space to the screen. The application can be run in two configurations:
+The goal is to create an application that renders a voxelized space. The application can be run in two configurations:
 \begin{itemize}
-	\item using a raster pipeline
-	\item using a ray tracing pipeline
+\item using a raster pipeline
+\item using a ray-tracing pipeline
 \end{itemize}
 
-Raster pipeline has been developed first to be used as a baseline, to compare it's performance to the performance of the ray tracing pipeline.
+Raster pipeline has been developed first to be used as a baseline and to compare it's performance to the performance of the ray tracing pipeline.
 
 The application can be divided into three main parts:
 \begin{itemize}
-	\item{Generation and meshing of the chunks}
-	\item{Rasterizer}
-	\item{Ray tracer}
+\item{Generation and meshing of the chunks}
+\item{Rasterizer}
+\item{Ray tracer}
 \end{itemize}
 
 \section{Generation and meshing of the chunks}
-This part of the application has mostly been covered in the chapter 3. Each block in the chunk can either be a completely transparent air block or a completely opaque solid block. It's possible to specify the the dimensions of the chunk (NxNxN, all dimensions will be the same), the number of chunks that will be rendered (MxMx1, all chunks are laid on the same y plane) and the percentage of the chunk that is solid. For this example, each chunks is 32x32x32 iun size, there are 32x32x1=1024 chunks and 10\% of the chunks are solid blocks. The chunks are generated in three steps:
+This part of the application has mostly been covered in chapter 3. Each block in the chunk can either be a completely transparent air block or a completely opaque solid block. It's possible to specify the dimensions of the chunk (NxNxN, all dimensions will be the same), the number of chunks that will be rendered (MxMx1, all chunks are laid on the same y plane) and the percentage of the chunk that is solid. For this example, each chunk is 32x32x32 blocks in size, there are 32x32x1=1024 chunks and 10\% of the chunks are solid blocks. The chunks are generated in three steps:
 \begin{itemize}
-	\item{A vertex array is created, containing each of 33x33x33=35,937 possible vertex positions. A single one is used for all of the chunks.}
-	\item{For each chunks, a three dimensional array is filled with random values: \texttt{blocks[i][j][k] = rand() \% 10 == 0;}}
-	\item{Greedy meshing algorithm is executed for each chunk, creating a single index array that references the vertex array previously created}
+\item{A vertex array is created, containing each of 33x33x33=35,937 possible vertex positions. A single one is used for all of the chunks.}
+\item{For each chunks, a three dimensional array is filled with random values: \texttt{blocks[i][j][k] = rand() \% 10 == 0;}}
+\item{Greedy meshing algorithm is executed for each chunk, creating a single index array}
 \end{itemize}
 
-An additional optimization has been made to the greedy mesher - each plane of the chunk is generated in a separate thread.
+An additional optimization has been made to the greedy mesher - each set of slices parallel to a plane is generated in a separate thread.
 
-The vertex and all of the index arrays are copied to the GPU in their own buffers.
+The vertex and all of the index arrays are then copied to the GPU to their buffers.
 
 \section{Rasterizer}
-When raster pipeline configuration is selected, phong shading with a single point light is used to shade all of the blocks.
+When raster pipeline configuration is selected, Phong shading with a single point light is used to shade all of the blocks. The result can be seen in the image 6.1.
+
+\begin{center}
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{raster.png}
+\caption{Rasterized image with a single point light}
+\end{figure}
+\end{center}
 
 \section{Ray tracer}
-In case that the application was run in any of the two ray tracing configurations, a complete ray tracing pipeline is setup. The shaders were written to demonstrate smooth shadows and perfect reflections, two things that are very difficult to achieve with a raster pipeline. Following data is made available to the shaders:
+In case that the application was run in any of the two ray-tracing configurations, a complete ray tracing pipeline is setup. The shaders were written to demonstrate smooth shadows and perfect reflections, two things that are very difficult to achieve with a raster pipeline. The following data is made available to the shaders:
 \begin{itemize}
-	\item{the acceleration structure}
-	\item{storage image as the render target}
-	\item{a storage buffer containing all the vertices for a chunk}
-	\item{an array of storage buffers containing all the indices for each chunk}
-	\item{an array of sample sets used when sampling the light source in shadow testing}
-	\item{view and projection matrices, camera position and definition of the light source}
+\item{the acceleration structure}
+\item{storage image as the render target}
+\item{a storage buffer containing all the vertices for a chunk}
+\item{an array of storage buffers containing all the indices for each chunk}
+\item{an array of sample sets used when sampling the light source in shadow testing}
+\item{view and projection matrices, camera position and definition of the light source}
 \end{itemize}
 
-First, in the ray generation shader, a single primary ray per pixel is shot. When the closest intersection with the ray is found, triangle ID with index and vertex arrays are used to determine the vertices and the normal of the triangle. The light source is modeled as four coplanar points describing a rectangle. First, a dot product is calculated between the normal of the hit triangle and vectors going from the intersection towards each of the light corners. If at least one result is positive, a shadow test is performed.
-Shadow test involves picking one of the sample sets from the array. The samples are calculated using multi-jittered sampling on a unit rectangle. This is then superimposed over the light source and, in this case, 25 samples are chosen. A ray is shot from the intersection towards each of the sample and the shadow factor is determined as number of samples over (1 + number of obstructed samples). Diffuse factor is calculated as an average of the dot product between the hit triangle normal and the vector towards each of the corners of the light source. Shadow factor and diffuse factor are then multiplied with the colour of the triangle (in this case, solid green) to get the base colour. If reflections are enabled, a new reflected ray is shot from the intersection, repeating the whole process recursively up to a predefined depth. On each layer of recursion the base colour of current layer and the base colour of the layer deeper in the recursion are combined in a ratio 3:1.
+\begin{lstlisting}[language=c++, style=cppstyle, caption="Any hit shader used in the application", frame=single]
+#version 460
+#extension GL_EXT_ray_tracing : enable
+#extension GL_EXT_scalar_block_layout : enable
+#extension GL_EXT_nonuniform_qualifier : enable
 
-Once the resulting image is produced, if denoising is enabled, the image is sent to the denoiser for post processing. Either way, the image is then copied to the swapchain and presented to the screen.
+hitAttributeEXT vec3 attribs;
+
+struct Payload {
+vec3 hitValue;
+uint depth;
+};
+
+layout(location = 0) rayPayloadInEXT Payload backPayload;
+
+layout(location = 1) rayPayloadEXT bool isShadowed;
+layout(location = 2) rayPayloadEXT Payload forwardPayload;
+
+struct Vertex {
+vec3 pos;
+};
+
+layout(binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
+layout(binding = 2, set = 0, scalar) uniform UniformBuffer
+{
+vec3 lightSpan[4];
+uint reflectionsEnabled;
+uint shadowsEnabled;
+} UB;
+
+layout(binding = 3, set = 0, scalar) buffer Vertices {
+Vertex v[];
+} vertices;
+
+layout(binding = 4, set = 0) buffer Indices {
+uint i[];
+} indices[];
+
+layout(binding = 5, set = 0) buffer Sample {
+vec2 samplePoints[];
+} sampleSets[];
+
+layout( push_constant ) uniform PushConstants {
+mat4 viewInverse;
+mat4 projInverse;
+vec3 cameraPosition;
+} push;
+
+float PHI = 1.61803398874989484820459; // Golden Ratio
+float goldNoise(in vec2 xy, in float seed){
+return fract(tan(distance(xy*PHI, xy)*seed)*xy.x);
+}
+
+vec3 sampleValue(vec3 a, vec3 b, vec3 c, vec2 offset) {
+vec3 abDir = (b-a) * offset.x;
+vec3 acDir = (c-a) * offset.y;
+
+return a + abDir + acDir;
+}
+
+void main()
+{
+if (backPayload.depth == 0) {
+return;
+}
+
+ivec3 ind = ivec3(
+indices[gl_InstanceCustomIndexEXT].i[3 * gl_PrimitiveID + 0],
+indices[gl_InstanceCustomIndexEXT].i[3 * gl_PrimitiveID + 1],
+indices[gl_InstanceCustomIndexEXT].i[3 * gl_PrimitiveID + 2]);
+
+vec3 v0 = vertices.v[ind.x].pos;
+vec3 v1 = vertices.v[ind.y].pos;
+vec3 v2 = vertices.v[ind.z].pos;
+
+vec3 first = v1 - v0;
+vec3 second = v2 - v0;
+vec3 normal = normalize(cross(first, second));
+
+vec3 worldPos =
+gl_WorldRayOriginEXT
++ gl_WorldRayDirectionEXT * gl_HitTEXT;
+
+if (dot(normal, worldPos - push.cameraPosition) > 0) {
+backPayload.hitValue = vec3(0.0f);
+return;
+}
+
+vec3 toLight[4];
+toLight[0] = normalize(UB.lightSpan[0] - worldPos);
+toLight[1] = normalize(UB.lightSpan[1] - worldPos);
+toLight[2] = normalize(UB.lightSpan[2] - worldPos);
+toLight[3] = normalize(UB.lightSpan[3] - worldPos);
+
+float lightAngle[4];
+lightAngle[0] = dot(normal, toLight[0]);
+lightAngle[1] = dot(normal, toLight[1]);
+lightAngle[2] = dot(normal, toLight[2]);
+lightAngle[3] = dot(normal, toLight[3]);
+
+float shadowFactor = 1;
+if (UB.shadowsEnabled == 1 &&
+(lightAngle[0] > 0
+|| lightAngle[1] > 0
+|| lightAngle[2] > 0
+|| lightAngle[3] > 0)) {
+
+float tMin = 0.001;
+vec3 origin = worldPos;
+uint flags =
+gl_RayFlagsTerminateOnFirstHitEXT
+| gl_RayFlagsOpaqueEXT
+| gl_RayFlagsSkipClosestHitShaderEXT;
+
+uint obstruction = 0;
+uint shadowSampleCount = 25;
+
+uint index = int(
+100
+* goldNoise(
+worldPos.xy * worldPos.zy,
+worldPos.z + worldPos.x)
+);
+
+for (uint i = 0; i < shadowSampleCount; ++i) {
+vec3 samplePoint = sampleValue(
+UB.lightSpan[0],
+UB.lightSpan[1],
+UB.lightSpan[2],
+sampleSets[index].samplePoints[i]
+);
+
+float tMax = length(samplePoint - worldPos);
+vec3 rayDir = normalize(samplePoint - worldPos);
+isShadowed = true;
+traceRayEXT(
+topLevelAS,
+flags,
+0xFF,
+0,
+0,
+1,
+origin,
+tMin,
+rayDir,
+tMax,
+1);
+
+if (isShadowed) {
+++obstruction;
+}
+}
+
+shadowFactor = 1.0 / (1 + obstruction);
+}
+
+float diffuseFactor = (
+lightAngle[0]
++ lightAngle[1]
++ lightAngle[2]
++ lightAngle[3]
+) / 4.0;
+
+vec3 lightBase =
+shadowFactor
+* diffuseFactor
+* vec3(0.0f, 1.0f, 0.0f);
+
+vec3 toEye = normalize(push.cameraPosition - worldPos);
+vec3 reflectedToEye = -toEye - 2 * dot(normal, -toEye) * normal;
+
+forwardPayload.hitValue = vec3(0.0f);
+forwardPayload.depth = backPayload.depth - 1;
+
+if (UB.reflectionsEnabled == 1) {
+traceRayEXT(
+topLevelAS,
+gl_RayFlagsOpaqueEXT,
+0xFF,
+0,
+0,
+0,
+worldPos,
+0.001,
+reflectedToEye,
+1000.0,
+2);
+}
+
+backPayload.hitValue = 0.75 * lightBase + 0.25 * forwardPayload.hitValue;
+}
+\end{lstlisting}
+
+First, in the ray generation shader, a single primary ray per pixel is shot. When the closest intersection with the ray is found, triangle ID with index and vertex arrays are used to determine the vertices and the normal of the triangle. The light source is modelled as four coplanar points describing a rectangle. First, a dot product is calculated between the normal of the hit triangle and vectors going from the intersection towards each of the light corners. If at least one result is positive, a shadow test is performed.
+Shadow test involves picking one of the sample sets from the array. The samples are calculated using multi-jittered sampling \cite{ray_tracing} on a unit rectangle. This is then superimposed over the light source and, in this case, 25 samples are chosen. A ray is shot from the intersection towards each of the samples and the shadow factor is determined as a number of samples over (1 + number of obstructed samples). The diffuse factor is calculated as an average of the dot product between the hit triangle normal and the vector towards each of the corners of the light source. Shadow factor and diffuse factor are then multiplied with the colour of the triangle (in this case, solid green) to get the base colour. If reflections are enabled, a new reflected ray is shot from the intersection, repeating the whole process recursively up to a predefined depth. On each layer of recursion, the base colour of the current layer and the base colour of the layer deeper in the recursion are combined in a ratio 3:1.
+
+Once the resulting image is produced, if denoising is enabled, the image is sent to the denoiser for post-processing. Either way, the image is then copied to the swapchain and presented to the screen.
 
 \section{Performance measurements}
-All of the testing is done on the following machine:
+In this chapter, multiple application configurations are tested and compared. All of the tests are run on the machines with specifications described in table ~\ref{table:specifications}.
+
+\begin{table}[H]
+\begin{center}
+\caption{Specifications of the test machine}
+\begin{tabular}{|c|c|}
+\hline
+Component type & Component used \\
+\hline
+CPU & Intel Core i9-9900KS \\
+\hline
+GPU & Nvidia GeForce RTX 2080Ti \\
+\hline
+RAM & 32GB DDR4 3600CL16 \\
+\hline
+\end{tabular}
+\label{table:specifications}
+\end{center}
+\end{table}
+
+The same scene is used for each test. It consists of 1024 32x32x32 chunks arranged in a 32x32x1 pattern. 10\% of each chunk is randomly filled with the opaque blocks, but the seed is set at the start of the program, so the same scene consisting of 30,917,848 triangles is generated on every run. Resolution is set to 1920x1080.
+
+Performance is calculated as average frame time over 5 seconds. The camera is not moved during that period. Frame time includes the workload on both the CPU and the GPU.
+
+The first test is a comparison between the raster and raytracing pipelines, results can be viewed in table ~\ref{table:ras_vs_ray}. There are no calculations in the shaders, if a block is present, the pixel is coloured in a solid colour. Since the program has to be recompiled to change the rendering technique, the camera is positioned in the roughly same position and orientation. The whole scene is visible in the frame.
+
+\begin{table}[H]
+\caption{Rasterization vs. ray tracing}
 \begin{center}
 \begin{tabular}{|c|c|}
-	\hline
-	Component type & Component used \\
-	\hline
-	CPU & Intel Core i9-9900KS            \\
-	\hline
-	GPU & Nvidia GeForce RTX 2080Ti   \\
-	\hline
-	RAM & 32GB DDR4 3600CL16         \\
-	\hline
+\hline
+Test & Average frame time \\
+\hline
+Rasterization & ~4.37ms \\
+\hline
+Ray tracing & ~1.13ms \\
+\hline
 \end{tabular}
+\label{table:ras_vs_ray}
+\end{center}
+\end{table}
+
+Ray tracing is almost four times faster than rasterization. This result is unexpected, especially since the implementation of ray tracing pipeline was done a bit less parallel than the rasterization one.
+
+\begin{center}
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{tests/ray_trace_simple.png}
+\caption{Resulting image when ray tracing is used}
+\end{figure}
 \end{center}
 
-The same scene is used for each test. It consists of 1024 32x32x32 chunks arranged in a 32x32x1 pattern. 10\% of each chunk is randomly filled with the opaque blocks, but the seed for the random function is set at the start of the program, so the same scene consisting of 30,917,848 triangles is generated on every run. Resolution is set to 1280x720.
+\begin{center}
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{tests/raster_simple.png}
+\caption{Resulting image when rasterization is used}
+\end{figure}
+\end{center}
 
-Performance is calculated as average frame time over 5 seconds. The camera is not moved during that period.
-
-First test is a comparison between the raster and raytracing pipelines. There are no calcuations in the shaders, if a block is present, the pixel is coloured in a solid colour. Since the program has to be recompiled in order to change the rendering technique, the camera is positioned in the rougly same position and orientation. Whole scene is visible in the frame. Interestingly, it turns out that raytracing is about four times faster, at least in this quite unrealistic case:
+Following tests compare impacts of shadows, reflections and denoising on the frame times, results are in table ~\ref{table:real_test}. All of these features can be toggled during runtime, so each test is run on the exactly same frame.
+Reflections are set to 5 bounces, while shadows are calculated using 25 samples.
+\begin{table}[H]
+\caption{Rasterization vs. ray tracing}
 \begin{center}
 \begin{tabular}{|c|c|}
-	\hline
-	Test & Average frame time \\
-	\hline
-	Rasterization & ~4.50ms \\
-	\hline
-	Ray tracing & ~1.15ms \\
-	\hline
+\hline
+Test & Average frame time \\
+\hline
+All off & ~1.00ms \\
+\hline
+Reflections only & ~2.09ms \\
+\hline
+Shadows only & ~8.14ms \\
+\hline
+Denoising only & ~16.47ms \\
+\hline
+Reflections + denoising & ~17.83ms \\
+\hline
+Shadows + reflections & ~19.12ms \\
+\hline
+Shadows + denoising & ~23.30ms \\
+\hline
+All on & ~34.82ms \\
+\hline
 \end{tabular}
+\label{table:real_test}
 \end{center}
+\end{table}
 
-Following tests compare impacts of shadows (S), reflections (R) and denoising (D) on the frame times. All of these can be toggled during runtime, so each test is run on the exactly same frame.
+Reflections seem to have a lower impact on performance than shadows since reflections introduce only 5 additional rays per primary ray, opposed to shadows which shoot 25 additional rays per primary ray. Denoising seems to impact performance quite a lot, especially when combined with other effects, especially shadows. Since the sole purpose of denoising is to smooth out the shadows in the scene, there isn't much point in turning denoising on if no (smooth) shadows are present. It's also worth noting that reflections decrease the quality of the denoised image. Since the shadowed surface is no longer of solid colour, the denoiser has additional data which it has no way of filtering out. Using the advanced version of the denoiser with the additional input could improve the quality of the result.
+
 \begin{center}
-\begin{tabular}{|c|c|}
-	\hline
-	Test & Average frame time \\
-	\hline
-	All off &  2.34ms \\
-	\hline
-	Only shadows & ~4.50ms \\
-	\hline
-	Only reflections & ~1.15ms \\
-	\hline
-	Only denoising & ~1.15ms \\
-	\hline
-	Shadows + reflections & ~1.15ms \\
-	\hline
-	Shadows + denoising & ~1.15ms \\
-	\hline
-	Reflections + denoising & ~1.15ms \\
-	\hline
-	All on & ~1.15ms \\
-	\hline
-\end{tabular}
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{tests/all_off.png}
+\caption{Test with all features disabled}
+\end{figure}
 \end{center}
 
-\section{Possible improvements and expansions}
+\begin{center}
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{tests/reflections_only.png}
+\caption{Test with only reflections enabled}
+\end{figure}
+\end{center}
+
+\begin{center}
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{tests/shadows_only.png}
+\caption{Test with only shadows enabled}
+\end{figure}
+\end{center}
+
+\begin{center}
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{tests/denoising_only.png}
+\caption{Test with only denoising enabled}
+\end{figure}
+\end{center}
+
+\begin{center}
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{tests/reflections+denoising.png}
+\caption{Test with reflections and denoising}
+\end{figure}
+\end{center}
+
+\begin{center}
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{tests/shadows+reflections.png}
+\caption{Test with shadows and reflections}
+\end{figure}
+\end{center}
+
+\begin{center}
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{tests/shadows+denoising.png}
+\caption{Test with shadows and denoising}
+\end{figure}
+\end{center}
+
+\begin{center}
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{tests/all_on.png}
+\caption{Test with everything enabled}
+\end{figure}
+\end{center}
+
+\section{Possible improvements and additions}
 The application can be improved in several ways. Firstly, the greedy mesher, while meshing each of six slice sets concurrently, does mesh them one chunk after another, and it does so on only six threads at the time. The concurrent code is also only two times faster than the serial one, most likely due to the overhead of creating and destroying threads. The CPU also never goes above 40\% utilization, since it only uses at most 37.5\% of threads available (on the test system). Using thread pools and generating all of the chunks in parallel (or at least in batches that are at least as large as the number of threads available on the CPU) could improve the performance significantly.
 Greedy mesher is capable of processing chunks that are made of only two types of blocks. Expanding it to be able to use an arbitrary number of block types should be relatively straightforward.
 
-Light in the ray tracer is not attenuated, this feature could be implemented, but would required the redesign of how colours are blended together.
+Light in the ray tracer is not attenuated, this feature could be implemented, but would require the redesign of the way the colours are blended.
 
-The ray tracer only works with a single light source. Adding more light sources would lineary increase the required number of rays per each intersection, so a better approach would be required. Instead of taking all of the samples of all of the lights, only a single sample could be taken per light source. This would still lineary increase the required number of rays per intersection, albeit a bit slower. A step further would be sampling only a certain amount of light sources per intersection, and doing so only for light sources that are within the certain distance from the intersection.
+The ray tracer only works with a single light source. Adding more light sources would linearly increase the required number of rays per each intersection, so a different approach would be required. Instead of taking all of the samples of all of the lights, only a single sample could be taken per light source. This would still linearly increase the required number of rays per intersection, albeit a bit slower. A step further would be sampling only a certain amount of light sources per intersection and doing so only for light sources that are within a certain distance from the intersection.
 
-The ray tracing model does not account for colour bleed from nearby surfaces. This could be resolved similarly to shadows. Instead of a rectangular sample set, one would be derived from a half dome. A relatively short rays would be shot towards the sample points, blending the hit colours with the colour of the intersection.
+\begin{center}
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{rtx_on.jpg}
+\caption{RTX in Minecraft}
+\end{figure}
+\label{image:rtx_on}
+\end{center}
+
+The ray-tracing model does not account for colour bleed from nearby surfaces. This could be resolved similarly to shadows. Instead of a rectangular sample set, one would be derived from a half dome. Relatively short rays would be shot towards the sample points, blending the hit colours with the colour of the intersection.
 
 Ambient occlusion could be implemented using half domes. Each ray would be fairly short and tested whether it hits the nearby surface or not.
 
-Denoiser currently only takes the ray tracing output image, but the API can also recieve additional information in the form of an albedo and normal render. A raster pipeline running parallel to the ray tracer could be set, writing this data to images that could then be passed to the denoiser along with the ray tracing output image, producing better results.
+Denoiser currently only takes the ray tracing output image, but the API can also receive additional information in the form of an albedo and a normal render. A raster pipeline running parallel to the ray tracer could be set, writing this data to images that could then be passed to the denoiser along with the ray-tracing output image, producing better results.
+
+Currently, a scene is loaded at the start of the program and never changed. The application could be altered to load and unload chunks as the player moves through space. The time required to load the data from the disk and more importantly do build the accelerations structures on the fly would have to be taken into account.
+
+Image 6.11 demonstrates what can be done with ray tracing when properly implemented. DirectX equvivalent of the Vulkan ray tracing extension has been used to implement reflections, shadows and global illumination in Minecraft. DLSS is used to achieve playable framerates (>30FPS at 1080p on a GeForce RTX 2060 and above).
+
 
 \chapter{Conclusion}
 Ray tracing simplifies a lot of concepts which, when using rasterization, need to be simulated by complex algorithms. When properly implemented, ray tracing produces soft shadows, accurate reflections and detailed global illumination, and does so inherently.
 
 Its main drawback is its prohibitive cost - while GPUs today are technically capable of running the algorithm in real-time, it just isn't fast enough to do everything we'd like naively, requiring some kind of compromise:
 \begin{itemize}
-	\item limiting ray tracing to only certain aspects of the scene (only shadows, only reflections or only global illumination), while using rasterization for the rest
-	\item ray tracing with a low number of samples per pixel, resulting in noisy images that needs to be denoised
-	\item ray tracing at lower resolutions using one of the upscaling techniques to get the full resolution image
-	\item accumulating lighting and other over several frames, creating a higher quality renders, but with visible lighting latency and artefacts
+\item limiting ray tracing to only certain aspects of the scene (only shadows, only reflections or only global illumination), while using rasterization for the rest
+\item ray tracing with a low number of samples per pixel, resulting in noisy images that needs to be denoised
+\item ray tracing at lower resolutions using one of the upscaling techniques to get the full resolution image
+\item accumulating lighting and other over several frames, creating a higher quality renders, but with visible lighting latency and artefacts
 \end{itemize}
 
 Methods enumerated above are only a few possible optimizations and many implementations often use more than one of them. Especially interesting is rendering at a lower resolution and upscaling - Nvidia has been developing a deep learning powered technique called DLSS (Deep Learning Super Sampling) which runs in constant time, but produces very good results.
@@ -451,7 +787,7 @@ However drastic the advancements in ray tracing have been in few recent years, t
 \vspace*{\fill}
 \thispagestyle{empty}
 \begin{center}
-	{\bf Interaktivan prikaz vokseliziranog prostora s Vulkanom uz sklopovski ubrzano praćenje zrake}
+{\bf Interaktivan prikaz vokseliziranog prostora s Vulkanom uz sklopovski ubrzano praćenje zrake}
 \end{center}
 \hspace*{\fill} {\bf Sa\v{z}etak} \hspace*{\fill} \par
 \vspace*{25pt}
@@ -462,7 +798,7 @@ U ovom radu razrađen je prikaz konačnog vokseliziranog prostora upotrebom sklo
 
 \engtitle{Rendering of Voxelized Space with Vulkan Using Hardware Accelerated Ray Tracing}
 \begin{abstract}
-This paper explores the real-time representation of finite voxelized space using hardware-accelerated ray tracing. It compares standard rasterization to ray tracing and outlines the benefits and drawbacks of one over the other. It's explored how Vulkan exposes hardware ray tracing capabilities through its  VK\_KHR\_RAY\_TRACING extension. Finally, a small Vulkan example is described that shows a basic implementation of the ray tracing algorithm.
+This paper explores the real-time representation of finite voxelized space using hardware-accelerated ray tracing. It compares standard rasterization to ray tracing and outlines the benefits and drawbacks of one over the other. It's explored how Vulkan exposes hardware ray tracing capabilities through its VK\_KHR\_RAY\_TRACING extension. Finally, a small Vulkan example is described that shows a basic implementation of the ray tracing algorithm.
 
 \keywords{ray tracing, Vulkan, voxel, hardware acceleration}
 \end{abstract}
